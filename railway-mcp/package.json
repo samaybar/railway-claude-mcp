@@ -1,0 +1,17 @@
+{
+  "name": "railway-mcp-server-remote",
+  "version": "1.0.0",
+  "description": "Remote Railway MCP server with OAuth for Claude.ai",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "express": "^5.2.1",
+    "graphql-request": "^7.2.0",
+    "fuse.js": "^7.1.0",
+    "pg": "^8.16.0",
+    "zod": "^3.25.0"
+  }
+}

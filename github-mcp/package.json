@@ -1,0 +1,15 @@
+{
+  "name": "github-mcp-server",
+  "version": "1.0.0",
+  "description": "Remote GitHub MCP server with OAuth for Claude.ai",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "@octokit/rest": "^21.1.1",
+    "express": "^5.2.1",
+    "zod": "^3.25.0"
+  }
+}
