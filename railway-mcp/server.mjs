@@ -15,8 +15,14 @@ const PORT = parseInt(process.env.PORT || "3000", 10);
 // as the connecting user, using the access token from their Login-with-Railway
 // session. This is what removes the need to paste a separate token.
 const RAILWAY_API_TOKEN = process.env.RAILWAY_API_TOKEN || "";
+// Prefer an explicit PUBLIC_URL; otherwise derive it from Railway's
+// auto-injected RAILWAY_PUBLIC_DOMAIN (so the OAuth callback is correct with
+// zero config); fall back to localhost for local dev.
 const PUBLIC_URL = (
-  process.env.PUBLIC_URL || `http://localhost:${PORT}`
+  process.env.PUBLIC_URL ||
+  (process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : `http://localhost:${PORT}`)
 ).replace(/\/$/, "");
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
 
@@ -1432,10 +1438,13 @@ async function ensureRailwayClient() {
       token_endpoint_auth_method: RAILWAY_OAUTH_CLIENT_SECRET
         ? "client_secret_basic"
         : "none",
+      redirect: RAILWAY_CALLBACK,
     };
     return;
   }
-  if (railwayClientReg?.client_id) return; // already registered (loaded from store)
+  // Re-register if we have no client yet, or the callback changed (e.g. a
+  // domain was assigned after the first boot).
+  if (railwayClientReg?.client_id && railwayClientReg.redirect === RAILWAY_CALLBACK) return;
 
   try {
     const res = await fetch(RAILWAY_OIDC.register, {
@@ -1463,6 +1472,7 @@ async function ensureRailwayClient() {
       token_endpoint_auth_method:
         data.token_endpoint_auth_method ||
         (data.client_secret ? "client_secret_basic" : "none"),
+      redirect: RAILWAY_CALLBACK,
     };
     saveStore();
     console.log(`[railway-oauth] registered client ${railwayClientReg.client_id}`);
