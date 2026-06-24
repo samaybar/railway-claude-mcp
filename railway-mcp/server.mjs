@@ -466,28 +466,79 @@ function createRailwayMcpServer(railwayToken) {
     return (prod ?? envs[0]).id;
   }
 
-  // -- list-projects --
-  server.tool("list-projects", "List all Railway projects", {}, async () => {
-    try {
-      const data = await gqlRequest(gql`
-        query {
-          projects {
-            edges {
-              node {
+  // -- list-workspaces --
+  server.tool(
+    "list-workspaces",
+    "List the Railway workspaces this connector can access (the ones you granted at login). Use a workspace id with list-projects or create-project.",
+    {},
+    async () => {
+      try {
+        const d = await gqlRequest(gql`
+          query {
+            me {
+              workspaces {
                 id
                 name
-                description
-                createdAt
-                updatedAt
-                environments {
-                  edges {
-                    node {
-                      id
-                      name
-                    }
-                  }
+              }
+            }
+          }
+        `);
+        const ws = d.me?.workspaces || [];
+        if (ws.length === 0) {
+          return toolResponse(
+            "No accessible workspaces. Reconnect and grant a workspace when prompted."
+          );
+        }
+        return toolResponse(
+          `Workspaces you've granted access to:\n\n` +
+            ws.map((w) => `- **${w.name}** (${w.id})`).join("\n")
+        );
+      } catch (error) {
+        return toolResponse(`Failed to list workspaces: ${error.message}`);
+      }
+    }
+  );
+
+  // -- list-projects --
+  server.tool(
+    "list-projects",
+    "List Railway projects. Login-with-Railway scopes this connector to the workspaces you granted, so projects are listed per workspace. Pass workspaceId (from list-workspaces) to scope to one.",
+    {
+      workspaceId: z
+        .string()
+        .optional()
+        .describe("Limit to a single workspace id (from list-workspaces)."),
+    },
+    async ({ workspaceId }) => {
+      try {
+        let workspaces;
+        if (workspaceId) {
+          workspaces = [{ id: workspaceId, name: workspaceId }];
+        } else {
+          const wd = await gqlRequest(gql`
+            query {
+              me {
+                workspaces {
+                  id
+                  name
                 }
-                services {
+              }
+            }
+          `);
+          workspaces = wd.me?.workspaces || [];
+        }
+        if (workspaces.length === 0) {
+          return toolResponse(
+            "No accessible workspaces. Reconnect and grant a workspace when prompted."
+          );
+        }
+
+        const blocks = [];
+        for (const w of workspaces) {
+          const pd = await gqlRequest(
+            gql`
+              query ($w: String!) {
+                projects(workspaceId: $w) {
                   edges {
                     node {
                       id
@@ -496,39 +547,36 @@ function createRailwayMcpServer(railwayToken) {
                   }
                 }
               }
-            }
-          }
+            `,
+            { w: w.id }
+          );
+          const projs = pd.projects?.edges?.map((e) => e.node) || [];
+          const lines = projs.length
+            ? projs.map((p) => `  - ${p.name} (${p.id})`).join("\n")
+            : "  (no projects)";
+          blocks.push(`**${w.name}** (${w.id})\n${lines}`);
         }
-      `);
-
-      const allProjects =
-        data.projects?.edges?.map((e) => e.node) || [];
-
-      const formatted = allProjects
-        .map(
-          (p) =>
-            `**${p.name}** (ID: ${p.id})\n` +
-            `Description: ${p.description || "none"}\n` +
-            `Environments: ${p.environments?.edges?.map((e) => e.node.name).join(", ") || "none"}\n` +
-            `Services: ${p.services?.edges?.map((e) => e.node.name).join(", ") || "none"}\n` +
-            `Created: ${new Date(p.createdAt).toLocaleDateString()}\n`
-        )
-        .join("\n");
-
-      return toolResponse(
-        `Found ${allProjects.length} project(s):\n\n${formatted}`
-      );
-    } catch (error) {
-      return toolResponse(`Failed to list projects: ${error.message}`);
+        return toolResponse(blocks.join("\n\n"));
+      } catch (error) {
+        return toolResponse(`Failed to list projects: ${error.message}`);
+      }
     }
-  });
+  );
 
   // -- create-project --
   server.tool(
     "create-project",
-    "Create a new Railway project",
-    { name: z.string().describe("Name for the new project") },
-    async ({ name }) => {
+    "Create a new Railway project. With Login-with-Railway auth, pass workspaceId (from list-workspaces) so it lands in a workspace you can access.",
+    {
+      name: z.string().describe("Name for the new project"),
+      workspaceId: z
+        .string()
+        .optional()
+        .describe(
+          "Workspace id to create the project in (from list-workspaces)."
+        ),
+    },
+    async ({ name, workspaceId }) => {
       try {
         const data = await gqlRequest(
           gql`
@@ -547,7 +595,7 @@ function createRailwayMcpServer(railwayToken) {
               }
             }
           `,
-          { input: { name } }
+          { input: { name, ...(workspaceId ? { workspaceId } : {}) } }
         );
 
         const project = data.projectCreate;
