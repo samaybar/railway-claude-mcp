@@ -1,0 +1,10 @@
+[service]
+name = "railway-github-mcp"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/health"
+
+[[volumes]]
+mount = "/app/data"
+name = "auth-data"
