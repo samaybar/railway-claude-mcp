@@ -1539,14 +1539,17 @@ async function railwayUserinfo(accessToken) {
 // them on first use when no explicit allowlist is configured.
 function isUserAllowed(me) {
   const email = (me.email || "").toLowerCase();
-  if (!email || me.email_verified === false) return false;
+  // Railway's OIDC already authenticated this user; `sub` is the real identity.
+  // We don't gate on email_verified — Railway returns it false even for valid
+  // primary emails, so enforcing it locks out legitimate users.
+  if (!me.sub) return false;
   if (ALLOWED_RAILWAY_EMAILS.length) {
-    return ALLOWED_RAILWAY_EMAILS.includes(email);
+    return !!email && ALLOWED_RAILWAY_EMAILS.includes(email);
   }
   if (owner?.sub) return owner.sub === me.sub;
   owner = { sub: me.sub, email };
   saveStore();
-  console.log(`[auth] connector locked to ${email} (trust-on-first-use)`);
+  console.log(`[auth] connector locked to ${email || me.sub} (trust-on-first-use)`);
   return true;
 }
 
