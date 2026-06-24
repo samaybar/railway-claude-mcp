@@ -9,11 +9,32 @@ import { Octokit } from "@octokit/rest";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const AUTH_PASSWORD = process.env.AUTH_PASSWORD;
 const PUBLIC_URL = (
   process.env.PUBLIC_URL || `http://localhost:${PORT}`
 ).replace(/\/$/, "");
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
+
+// --- Login with Railway (OAuth 2.0 / OIDC) — used ONLY to authenticate the
+// human connecting from Claude. The GitHub API itself is called with the
+// static GITHUB_TOKEN below. ---
+const RAILWAY_OIDC = {
+  authorize: "https://backboard.railway.com/oauth/auth",
+  token: "https://backboard.railway.com/oauth/token",
+  userinfo: "https://backboard.railway.com/oauth/me",
+  register: "https://backboard.railway.com/oauth/register",
+};
+const RAILWAY_CALLBACK = `${PUBLIC_URL}/oauth/railway/callback`;
+// Identity only — no workspace scope needed, since this server doesn't call the
+// Railway API.
+const RAILWAY_OAUTH_SCOPE = process.env.RAILWAY_OAUTH_SCOPE || "openid email profile";
+const RAILWAY_OAUTH_CLIENT_ID = process.env.RAILWAY_OAUTH_CLIENT_ID || "";
+const RAILWAY_OAUTH_CLIENT_SECRET = process.env.RAILWAY_OAUTH_CLIENT_SECRET || "";
+// Railway emails allowed to use this connector. If empty, the first verified
+// login becomes the owner (trust-on-first-use) and is the only one allowed.
+const ALLOWED_RAILWAY_EMAILS = (process.env.ALLOWED_RAILWAY_EMAILS || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
 
 // Parse a truthy env var: accepts true/1/yes/on (case-insensitive).
 // Anything else (including unset) is falsy. Defaults to OFF so merging this
@@ -26,11 +47,6 @@ const MCP_ACTIVITY_ALERTS = parseBool(process.env.MCP_ACTIVITY_ALERTS);
 
 if (!GITHUB_TOKEN) {
   console.error("Error: GITHUB_TOKEN environment variable is required");
-  process.exit(1);
-}
-
-if (!AUTH_PASSWORD) {
-  console.error("Error: AUTH_PASSWORD environment variable is required");
   process.exit(1);
 }
 
@@ -50,6 +66,14 @@ const authCodes = new Map();
 const accessTokens = new Map();
 const refreshTokens = new Map();
 
+// This server's own OAuth-client registration with Railway (from DCR or env).
+let railwayClientReg = null;
+// Trust-on-first-use owner when ALLOWED_RAILWAY_EMAILS is empty: { sub, email }.
+let owner = null;
+// In-flight logins: railwayState -> { claude*, railwayVerifier, createdAt }.
+const pendingAuth = new Map();
+const PENDING_AUTH_TTL = 10 * 60 * 1000;
+
 const ACCESS_TOKEN_TTL = 7 * 24 * 60 * 60 * 1000;
 const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60 * 1000;
 const AUTH_CODE_TTL = 5 * 60 * 1000;
@@ -66,8 +90,11 @@ function loadStore() {
     for (const [k, v] of data.refreshTokens || []) {
       if (v.expiresAt > now) refreshTokens.set(k, v);
     }
+    if (data.railwayClientReg) railwayClientReg = data.railwayClientReg;
+    if (data.owner) owner = data.owner;
     console.log(
-      `Loaded ${registeredClients.size} clients, ${accessTokens.size} access tokens, ${refreshTokens.size} refresh tokens`
+      `Loaded ${registeredClients.size} clients, ${accessTokens.size} access tokens, ${refreshTokens.size} refresh tokens` +
+        (owner ? `, owner=${owner.email}` : "")
     );
   } catch (err) {
     console.error("Failed to load auth store, starting fresh:", err.message);
@@ -81,6 +108,8 @@ function saveStore() {
       clients: [...registeredClients.entries()],
       accessTokens: [...accessTokens.entries()],
       refreshTokens: [...refreshTokens.entries()],
+      railwayClientReg,
+      owner,
     };
     fs.writeFileSync(STORE_PATH, JSON.stringify(data), "utf-8");
   } catch (err) {
@@ -1030,6 +1059,109 @@ function createGitHubMcpServer() {
 }
 
 // ---------------------------------------------------------------------------
+// Login-with-Railway helpers (authentication only)
+// ---------------------------------------------------------------------------
+async function ensureRailwayClient() {
+  if (RAILWAY_OAUTH_CLIENT_ID) {
+    railwayClientReg = {
+      client_id: RAILWAY_OAUTH_CLIENT_ID,
+      client_secret: RAILWAY_OAUTH_CLIENT_SECRET || null,
+      token_endpoint_auth_method: RAILWAY_OAUTH_CLIENT_SECRET
+        ? "client_secret_basic"
+        : "none",
+    };
+    return;
+  }
+  if (railwayClientReg?.client_id) return;
+
+  try {
+    const res = await fetch(RAILWAY_OIDC.register, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Self-hosted GitHub MCP server",
+        redirect_uris: [RAILWAY_CALLBACK],
+        grant_types: ["authorization_code"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "client_secret_basic",
+        scope: RAILWAY_OAUTH_SCOPE,
+      }),
+    });
+    if (!res.ok) {
+      console.error(
+        `[railway-oauth] DCR failed (${res.status}). Set RAILWAY_OAUTH_CLIENT_ID/SECRET to register an app manually.`
+      );
+      return;
+    }
+    const data = await res.json();
+    railwayClientReg = {
+      client_id: data.client_id,
+      client_secret: data.client_secret || null,
+      token_endpoint_auth_method:
+        data.token_endpoint_auth_method ||
+        (data.client_secret ? "client_secret_basic" : "none"),
+    };
+    saveStore();
+    console.log(`[railway-oauth] registered client ${railwayClientReg.client_id}`);
+  } catch (err) {
+    console.error("[railway-oauth] DCR error:", err.message);
+  }
+}
+
+function railwayTokenRequestInit(params) {
+  const body = new URLSearchParams(params);
+  const headers = { "Content-Type": "application/x-www-form-urlencoded" };
+  if (
+    railwayClientReg.token_endpoint_auth_method === "client_secret_basic" &&
+    railwayClientReg.client_secret
+  ) {
+    headers.Authorization =
+      "Basic " +
+      Buffer.from(
+        `${railwayClientReg.client_id}:${railwayClientReg.client_secret}`
+      ).toString("base64");
+  } else {
+    body.set("client_id", railwayClientReg.client_id);
+  }
+  return { method: "POST", headers, body: body.toString() };
+}
+
+async function railwayExchangeCode(code, codeVerifier) {
+  const res = await fetch(
+    RAILWAY_OIDC.token,
+    railwayTokenRequestInit({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: RAILWAY_CALLBACK,
+      code_verifier: codeVerifier,
+    })
+  );
+  if (!res.ok) throw new Error(`Railway token exchange failed (${res.status})`);
+  return res.json();
+}
+
+async function railwayUserinfo(accessToken) {
+  const res = await fetch(RAILWAY_OIDC.userinfo, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Railway userinfo failed (${res.status})`);
+  return res.json();
+}
+
+function isUserAllowed(me) {
+  const email = (me.email || "").toLowerCase();
+  if (!email || me.email_verified === false) return false;
+  if (ALLOWED_RAILWAY_EMAILS.length) {
+    return ALLOWED_RAILWAY_EMAILS.includes(email);
+  }
+  if (owner?.sub) return owner.sub === me.sub;
+  owner = { sub: me.sub, email };
+  saveStore();
+  console.log(`[auth] connector locked to ${email} (trust-on-first-use)`);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Express app with OAuth
 // ---------------------------------------------------------------------------
 const app = express();
@@ -1103,7 +1235,7 @@ app.post("/oauth/register", (req, res) => {
     .json({ client_id: clientId, redirect_uris, client_name: client.client_name });
 });
 
-// --- Authorization: GET shows login form ---
+// --- Authorization: kick off Login with Railway ---
 app.get("/oauth/authorize", (req, res) => {
   const {
     client_id,
@@ -1121,76 +1253,93 @@ app.get("/oauth/authorize", (req, res) => {
   const client = registeredClients.get(client_id);
   if (!client.redirect_uris.includes(redirect_uri)) return res.status(400).send("Invalid redirect_uri");
 
-  res.type("html").send(authPage({ client_id, redirect_uri, state, code_challenge }));
-});
-
-// --- Authorization: POST handles form (rate limited) ---
-app.post("/oauth/authorize", (req, res) => {
-  const ip = req.ip || "unknown";
-  const ua = req.headers["user-agent"] || "unknown";
-
-  // --- Rate limit check (before anything else) ---
-  const rl = checkRateLimit(ip);
-  if (rl.limited) {
-    console.log(`[RATE-LIMIT] ip=${ip} window=${rl.window} count=${rl.count}`);
-    sendDiscordAlert({
-      title: "🚨 Authorize endpoint rate-limited",
-      description: `An IP hit the rate limit on \`POST /oauth/authorize\`.`,
-      color: 0xED4245, // red
-      fields: [
-        { name: "IP", value: `\`${ip}\``, inline: true },
-        { name: "Window", value: rl.window, inline: true },
-        { name: "Attempts", value: String(rl.count), inline: true },
-        { name: "User-Agent", value: ua.slice(0, 256), inline: false },
-      ],
-      dedupeKey: `rate_limited:${ip}`,
-    });
+  if (!railwayClientReg?.client_id) {
     return res
-      .status(429)
-      .set("Retry-After", String(rl.retryAfter))
-      .type("text/plain")
-      .send(`Too many attempts. Try again in ${rl.retryAfter}s.`);
+      .status(503)
+      .send(
+        "Login with Railway is not configured. Set RAILWAY_OAUTH_CLIENT_ID/SECRET, or check the DCR registration logs."
+      );
   }
 
-  // Every POST attempt counts, success or failure.
-  recordAttempt(ip);
-
-  const { client_id, redirect_uri, state, code_challenge, password } = req.body;
-
-  if (!client_id || !registeredClients.has(client_id)) return res.status(400).send("Unknown client_id");
-
-  const client = registeredClients.get(client_id);
-  if (!client.redirect_uris.includes(redirect_uri)) return res.status(400).send("Invalid redirect_uri");
-
-  if (password !== AUTH_PASSWORD) {
-    console.log(`[AUTH-FAIL] ip=${ip} client_id=${client_id}`);
-    sendDiscordAlert({
-      title: "⚠️ Failed authorize attempt",
-      description: `A bad password was submitted to \`POST /oauth/authorize\`.`,
-      color: 0xFEE75C, // yellow
-      fields: [
-        { name: "IP", value: `\`${ip}\``, inline: true },
-        { name: "Client ID", value: `\`${client_id}\``, inline: true },
-        { name: "User-Agent", value: ua.slice(0, 256), inline: false },
-      ],
-      // One alert per IP per minute for bad-password events.
-      dedupeKey: `bad_password:${ip}`,
-    });
-    return res.type("html").send(authPage({ client_id, redirect_uri, state, code_challenge, error: true }));
-  }
-
-  const code = generateId(32);
-  authCodes.set(code, {
-    clientId: client_id,
-    codeChallenge: code_challenge,
-    redirectUri: redirect_uri,
-    expiresAt: Date.now() + AUTH_CODE_TTL,
+  const railwayState = generateId(16);
+  const railwayVerifier = base64url(crypto.randomBytes(32));
+  const railwayChallenge = base64url(sha256(railwayVerifier));
+  pendingAuth.set(railwayState, {
+    claudeClientId: client_id,
+    claudeRedirectUri: redirect_uri,
+    claudeState: state,
+    claudeCodeChallenge: code_challenge,
+    railwayVerifier,
+    createdAt: Date.now(),
   });
 
-  const redirectUrl = new URL(redirect_uri);
-  redirectUrl.searchParams.set("code", code);
-  if (state) redirectUrl.searchParams.set("state", state);
-  res.redirect(302, redirectUrl.toString());
+  const u = new URL(RAILWAY_OIDC.authorize);
+  u.searchParams.set("response_type", "code");
+  u.searchParams.set("client_id", railwayClientReg.client_id);
+  u.searchParams.set("redirect_uri", RAILWAY_CALLBACK);
+  u.searchParams.set("scope", RAILWAY_OAUTH_SCOPE);
+  u.searchParams.set("state", railwayState);
+  u.searchParams.set("code_challenge", railwayChallenge);
+  u.searchParams.set("code_challenge_method", "S256");
+  res.redirect(302, u.toString());
+});
+
+// --- Railway login callback: verify identity, then resume the Claude flow ---
+app.get("/oauth/railway/callback", async (req, res) => {
+  const ip = req.ip || "unknown";
+  const ua = req.headers["user-agent"] || "unknown";
+  const { code, state, error } = req.query;
+
+  if (error) {
+    return res.status(400).type("text/plain").send(`Railway login failed: ${error}`);
+  }
+
+  const pend = pendingAuth.get(state);
+  if (!pend || Date.now() - pend.createdAt > PENDING_AUTH_TTL) {
+    pendingAuth.delete(state);
+    return res
+      .status(400)
+      .type("text/plain")
+      .send("Login session expired. Please reconnect from Claude.");
+  }
+  pendingAuth.delete(state);
+
+  try {
+    const tok = await railwayExchangeCode(code, pend.railwayVerifier);
+    const me = await railwayUserinfo(tok.access_token);
+
+    if (!isUserAllowed(me)) {
+      console.log(`[AUTH-DENY] ip=${ip} email=${me.email}`);
+      sendDiscordAlert({
+        title: "⛔ Login denied (not on allowlist)",
+        description: "A Railway user authenticated but is not allowed to use this connector.",
+        color: 0xED4245,
+        fields: [
+          { name: "Email", value: `\`${truncate(me.email || "?", 128)}\``, inline: true },
+          { name: "IP", value: `\`${ip}\``, inline: true },
+          { name: "User-Agent", value: truncate(ua, 256), inline: false },
+        ],
+        dedupeKey: `denied:${me.sub || ip}`,
+      });
+      return res.status(403).type("html").send(deniedPage(me.email));
+    }
+
+    const mcpCode = generateId(32);
+    authCodes.set(mcpCode, {
+      clientId: pend.claudeClientId,
+      codeChallenge: pend.claudeCodeChallenge,
+      redirectUri: pend.claudeRedirectUri,
+      expiresAt: Date.now() + AUTH_CODE_TTL,
+    });
+
+    const redirectUrl = new URL(pend.claudeRedirectUri);
+    redirectUrl.searchParams.set("code", mcpCode);
+    if (pend.claudeState) redirectUrl.searchParams.set("state", pend.claudeState);
+    res.redirect(302, redirectUrl.toString());
+  } catch (err) {
+    console.error("[railway-oauth] callback error:", err.message);
+    res.status(502).type("text/plain").send("Login with Railway failed. Please try again.");
+  }
 });
 
 // --- Token endpoint ---
@@ -1317,43 +1466,29 @@ app.get("/mcp", (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Auth page HTML
+// Access-denied page (shown when a Railway user is not on the allowlist)
 // ---------------------------------------------------------------------------
-function authPage({ client_id, redirect_uri, state, code_challenge, error = false }) {
+function deniedPage(email) {
+  const who = email ? String(email).replace(/[<>&]/g, "") : "this account";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Authorize - GitHub MCP</title>
+<title>Access denied - GitHub MCP</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, sans-serif; background: #0d1117; color: #c9d1d9; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 2rem; max-width: 360px; width: 100%; }
-  h1 { font-size: 1.25rem; margin-bottom: .25rem; color: #f0f6fc; }
-  p { font-size: .875rem; color: #8b949e; margin-bottom: 1.5rem; }
-  label { font-size: .875rem; font-weight: 500; display: block; margin-bottom: .5rem; color: #c9d1d9; }
-  input[type="password"] { width: 100%; padding: .6rem .75rem; border: 1px solid #30363d; background: #0d1117; color: #c9d1d9; border-radius: 8px; font-size: 1rem; margin-bottom: 1rem; }
-  input[type="password"]:focus { outline: none; border-color: #58a6ff; box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.3); }
-  button { width: 100%; padding: .65rem; background: #238636; color: #fff; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; font-weight: 500; }
-  button:hover { background: #2ea043; }
-  .error { color: #f85149; font-size: .85rem; margin-bottom: 1rem; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 2rem; max-width: 380px; width: 100%; text-align: center; }
+  h1 { font-size: 1.25rem; margin-bottom: .5rem; color: #f0f6fc; }
+  p { font-size: .9rem; color: #8b949e; line-height: 1.5; }
+  code { background: #0d1117; border: 1px solid #30363d; padding: .1rem .3rem; border-radius: 4px; }
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>GitHub MCP Server</h1>
-  <p>Enter your password to authorize access.</p>
-  ${error ? '<div class="error">Incorrect password. Please try again.</div>' : ""}
-  <form method="POST" action="/oauth/authorize">
-    <input type="hidden" name="client_id" value="${client_id}">
-    <input type="hidden" name="redirect_uri" value="${redirect_uri}">
-    <input type="hidden" name="state" value="${state || ""}">
-    <input type="hidden" name="code_challenge" value="${code_challenge}">
-    <label for="password">Password</label>
-    <input type="password" id="password" name="password" required autofocus>
-    <button type="submit">Authorize</button>
-  </form>
+  <h1>Access denied</h1>
+  <p><code>${who}</code> is not authorized to use this connector. It is private to its owner. If this is your server, add your Railway email to <code>ALLOWED_RAILWAY_EMAILS</code>.</p>
 </div>
 </body>
 </html>`;
@@ -1362,13 +1497,24 @@ function authPage({ client_id, redirect_uri, state, code_challenge, error = fals
 // ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
-app.listen(PORT, () => {
-  console.log(`GitHub MCP server listening on port ${PORT}`);
-  console.log(`Public URL: ${PUBLIC_URL}`);
-  console.log("Auth: OAuth 2.0 with PKCE");
-  console.log(
-    `Rate limit on POST /oauth/authorize: ${RATE_LIMIT_PER_MINUTE}/min, ${RATE_LIMIT_PER_HOUR}/hr per IP`
-  );
-  console.log(`Discord alerts: ${DISCORD_WEBHOOK_URL ? "enabled" : "disabled (no DISCORD_WEBHOOK_URL)"}`);
-  console.log(`MCP activity alerts: ${MCP_ACTIVITY_ALERTS ? "ON" : "OFF (set MCP_ACTIVITY_ALERTS=true to enable)"}`);
+ensureRailwayClient().finally(() => {
+  app.listen(PORT, () => {
+    console.log(`GitHub MCP server listening on port ${PORT}`);
+    console.log(`Public URL: ${PUBLIC_URL}`);
+    console.log("Auth: Login with Railway (OAuth 2.0 / OIDC + PKCE)");
+    console.log(
+      `Railway OAuth client: ${railwayClientReg?.client_id || "NOT REGISTERED — set RAILWAY_OAUTH_CLIENT_ID/SECRET"}`
+    );
+    console.log(
+      `Allowlist: ${
+        ALLOWED_RAILWAY_EMAILS.length
+          ? ALLOWED_RAILWAY_EMAILS.join(", ")
+          : owner
+          ? `${owner.email} (locked)`
+          : "trust-on-first-use (open until first login)"
+      }`
+    );
+    console.log(`Discord alerts: ${DISCORD_WEBHOOK_URL ? "enabled" : "disabled (no DISCORD_WEBHOOK_URL)"}`);
+    console.log(`MCP activity alerts: ${MCP_ACTIVITY_ALERTS ? "ON" : "OFF (set MCP_ACTIVITY_ALERTS=true to enable)"}`);
+  });
 });

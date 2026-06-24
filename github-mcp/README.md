@@ -14,18 +14,20 @@ This service deploys from the `github-mcp/` directory of the bundle repo. See th
 2. Set the service **Root Directory** to `github-mcp`.
 3. Set the two required variables (below) and deploy.
 
-## Required variables
+## Variables
+
+Auth is **Login with Railway** (identity only — it gates *who* may connect). The GitHub API is called with your `GITHUB_TOKEN`. There is no password.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GITHUB_TOKEN` | Yes | A GitHub Personal Access Token. A **classic** token with the `repo` scope is recommended; fine-grained tokens can't create repositories. |
-| `AUTH_PASSWORD` | Yes | The password you'll type on the OAuth page when connecting from Claude. Make it long and random. |
+| `ALLOWED_RAILWAY_EMAILS` | No | Comma-separated Railway emails allowed to connect. If empty, the **first verified login becomes the owner** and the only one allowed (trust-on-first-use). |
+| `RAILWAY_OAUTH_CLIENT_ID` / `RAILWAY_OAUTH_CLIENT_SECRET` | No | A pre-registered OAuth app. If unset, the server **self-registers** via Dynamic Client Registration at boot. |
 | `PUBLIC_URL` | Auto | Set by `railway.toml` to your service's public domain. |
 | `DATA_DIR` | Auto | `/app/data` — the mounted volume where OAuth state persists. |
-| `DISCORD_WEBHOOK_URL` | No | If set, security/activity alerts are posted here. |
-| `MCP_ACTIVITY_ALERTS` | No | `true` to alert on session start and destructive tool calls. |
+| `DISCORD_WEBHOOK_URL` / `MCP_ACTIVITY_ALERTS` | No | Optional Discord alerts on session start and destructive tool calls. |
 
-### Getting a token
+### Getting a GitHub token
 
 Classic token (recommended): [github.com/settings/tokens](https://github.com/settings/tokens) → **Generate new token (classic)** → select the **repo** scope → generate and copy it immediately.
 
@@ -36,7 +38,7 @@ Custom connectors are available on Claude's paid plans (Pro/Max/Team/Enterprise)
 1. In Railway, copy the service's public URL and add `/mcp` (e.g. `https://github-mcp-server-production-xxxx.up.railway.app/mcp`).
 2. In Claude, open **Settings → Connectors → Add custom connector**.
 3. Paste the `/mcp` URL and save.
-4. Click **Connect**. Claude opens *this server's* authorization page (the dark "GitHub MCP Server" card) — enter your `AUTH_PASSWORD` and authorize.
+4. Click **Connect**. Claude sends you to **Login with Railway** — sign in. The first person to do this locks the connector to themselves (unless you set `ALLOWED_RAILWAY_EMAILS`).
 5. The GitHub tools now show up in Claude.
 
 ## Available tools
@@ -62,16 +64,17 @@ Custom connectors are available on Claude's paid plans (Pro/Max/Team/Enterprise)
 
 ## Security
 
-- You deploy your own instance with your own `GITHUB_TOKEN`. No tokens are shared.
-- OAuth 2.1 (PKCE + dynamic client registration) protects the `/mcp` endpoint; `POST /oauth/authorize` is rate-limited per IP.
-- `get-file` returns raw file contents by design — be aware it will return secrets if you point it at a file that contains them (e.g. a committed `.env`).
-- Anyone who can call the tools can act on your GitHub account within the token's scope — keep `AUTH_PASSWORD` secret and the deployment private.
+- **Login with Railway** authenticates the human; the connector is locked to its owner (or `ALLOWED_RAILWAY_EMAILS`). Anyone else who finds the URL is denied.
+- The GitHub API is called with your `GITHUB_TOKEN`; Railway login never sees it.
+- Claude ↔ server uses OAuth 2.1 (PKCE + dynamic client registration); the server ↔ Railway leg also uses PKCE.
+- `get-file` returns raw file contents by design — it will return secrets if you point it at a file that contains them (e.g. a committed `.env`).
+- OAuth state persists in the `/app/data` volume, surviving redeploys. Keep the deployment private.
 
 ## Local development
 
 ```bash
 npm install
-cp .env.example .env   # fill in GITHUB_TOKEN and AUTH_PASSWORD
+cp .env.example .env   # PUBLIC_URL must be reachable for the OAuth callback
 npm start
 ```
 

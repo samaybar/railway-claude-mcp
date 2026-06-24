@@ -26,8 +26,8 @@ You deploy your own copies with your own credentials. Nothing is shared or multi
 Each folder is an independent Railway service with its own `railway.toml`. Deploy them as two services:
 
 1. **Create a project** in Railway.
-2. **Add the Railway server:** New Service → Deploy from GitHub repo → this repo → set **Root Directory** to `railway-mcp`. Set `RAILWAY_API_TOKEN` and `AUTH_PASSWORD`.
-3. **Add the GitHub server:** New Service → same repo → set **Root Directory** to `github-mcp`. Set `GITHUB_TOKEN` and `AUTH_PASSWORD`.
+2. **Add the Railway server:** New Service → Deploy from GitHub repo → this repo → set **Root Directory** to `railway-mcp`. No variables required — it authenticates you via Login with Railway and acts as your account.
+3. **Add the GitHub server:** New Service → same repo → set **Root Directory** to `github-mcp`. Set `GITHUB_TOKEN` (the only required variable).
 4. Each service gets a public domain and a `/app/data` volume (declared in its `railway.toml`) where OAuth state persists across redeploys.
 
 Per-service variables and token instructions are in [`railway-mcp/README.md`](railway-mcp/README.md) and [`github-mcp/README.md`](github-mcp/README.md).
@@ -40,16 +40,17 @@ Custom connectors are available on Claude's paid plans (Pro/Max/Team/Enterprise)
 
 1. Copy the service's public URL from Railway and append `/mcp`.
 2. In Claude: **Settings → Connectors → Add custom connector** → paste the `/mcp` URL → save.
-3. Click **Connect**. Claude opens the server's own authorization page — enter that service's `AUTH_PASSWORD` and authorize.
+3. Click **Connect**. Claude sends you to **Login with Railway** — sign in (and, for the Railway server, consent to the workspace scope). The first person to connect locks the server to themselves.
 4. The tools appear in Claude. Add both connectors to get the full build-and-ship loop.
 
 ## Security model
 
-- **Your credentials, your instance.** Each server holds one token (yours) and is single-user. No multi-tenant credential custody.
-- **OAuth 2.1** (PKCE + dynamic client registration, RFC 8414/9728 metadata) protects every `/mcp` endpoint. The login page is rate-limited per IP.
+- **Login with Railway, locked to you.** Each server authenticates the human via Railway's OIDC and only allows its owner (the first verified login) or the emails in `ALLOWED_RAILWAY_EMAILS`. Anyone else who finds the URL is denied.
+- **No token to paste (Railway server).** By default it calls the Railway API *as the logged-in user* via their OAuth session, scoped to the workspace they consent to. `RAILWAY_API_TOKEN` is an optional override. (The GitHub server still uses your `GITHUB_TOKEN`, since Railway login can't issue GitHub credentials.)
+- **OAuth everywhere.** Claude ↔ server is OAuth 2.1 (PKCE + dynamic client registration, RFC 8414/9728 metadata); the server ↔ Railway leg also uses PKCE.
 - **Secrets stay out of the chat.** `list-variables` masks values by default; raw values require an explicit `reveal: true`.
 - **Optional alerting.** Set `DISCORD_WEBHOOK_URL` + `MCP_ACTIVITY_ALERTS=true` to get a ping on session start and on destructive/critical tool calls.
-- These servers can act on your Railway and GitHub accounts. Keep each `AUTH_PASSWORD` strong, keep the deployments private, and only connect clients you trust.
+- Keep the deployments private and only connect clients you trust.
 
 ## Repository layout
 

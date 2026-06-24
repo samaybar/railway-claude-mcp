@@ -14,16 +14,19 @@ This service deploys from the `railway-mcp/` directory of the bundle repo. See t
 2. Set the service **Root Directory** to `railway-mcp`.
 3. Set the two required variables (below) and deploy.
 
-## Required variables
+## Variables
+
+Auth is **Login with Railway** — there is no password, and no separate API token is required by default.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `RAILWAY_API_TOKEN` | Yes | A Railway API token. Create one at [railway.com/account/tokens](https://railway.com/account/tokens). |
-| `AUTH_PASSWORD` | Yes | The password you'll type on the OAuth page when connecting from Claude. Make it long and random. |
+| `RAILWAY_API_TOKEN` | No | Optional static API token. If set, the server calls the Railway API with it. If unset (default), it calls the API **as the logged-in user**, using their Login-with-Railway session. |
+| `ALLOWED_RAILWAY_EMAILS` | No | Comma-separated Railway emails allowed to connect. If empty, the **first verified login becomes the owner** and the only one allowed (trust-on-first-use). |
+| `RAILWAY_OAUTH_CLIENT_ID` / `RAILWAY_OAUTH_CLIENT_SECRET` | No | A pre-registered OAuth app. If unset, the server **self-registers** via Dynamic Client Registration at boot. |
+| `RAILWAY_OAUTH_SCOPE` | No | Defaults to `openid email profile offline_access workspace:admin`. |
 | `PUBLIC_URL` | Auto | Set by `railway.toml` to your service's public domain. |
 | `DATA_DIR` | Auto | `/app/data` — the mounted volume where OAuth state persists. |
-| `DISCORD_WEBHOOK_URL` | No | If set, security/activity alerts are posted here. |
-| `MCP_ACTIVITY_ALERTS` | No | `true` to alert on session start and destructive tool calls. |
+| `DISCORD_WEBHOOK_URL` / `MCP_ACTIVITY_ALERTS` | No | Optional Discord alerts on session start and destructive tool calls. |
 
 ## Connect it to Claude
 
@@ -32,8 +35,8 @@ Custom connectors are available on Claude's paid plans (Pro/Max/Team/Enterprise)
 1. In Railway, copy the service's public URL and add `/mcp` (e.g. `https://railway-mcp-server-production-xxxx.up.railway.app/mcp`).
 2. In Claude, open **Settings → Connectors → Add custom connector**.
 3. Paste the `/mcp` URL and save.
-4. Click **Connect**. Claude opens *this server's* authorization page (the purple "Railway MCP Server" card) — enter your `AUTH_PASSWORD` and authorize.
-5. The Railway tools now show up in Claude.
+4. Click **Connect**. Claude sends you to **Login with Railway** — sign in and consent to the workspace scope. The first person to do this locks the connector to themselves (unless you set `ALLOWED_RAILWAY_EMAILS`).
+5. The Railway tools now show up in Claude, acting as your Railway account.
 
 ## Available tools
 
@@ -59,17 +62,17 @@ Custom connectors are available on Claude's paid plans (Pro/Max/Team/Enterprise)
 
 ## Security
 
-- You deploy your own instance with your own `RAILWAY_API_TOKEN`. No tokens are shared.
-- OAuth 2.1 (PKCE + dynamic client registration) protects the `/mcp` endpoint; `POST /oauth/authorize` is rate-limited per IP.
+- **Login with Railway** authenticates the human; the connector is locked to its owner (or `ALLOWED_RAILWAY_EMAILS`). Anyone else who finds the URL is denied.
+- By default the server acts as the **logged-in user** via their OAuth session (scoped to the workspace they consent to) — no long-lived token to leak.
+- Claude ↔ server uses OAuth 2.1 (PKCE + dynamic client registration); the server ↔ Railway leg also uses PKCE.
 - `list-variables` masks values by default so secrets don't land in the chat transcript; raw values require an explicit `reveal: true`.
-- OAuth state persists in the `/app/data` volume, surviving redeploys.
-- Anyone who can call the tools can act on your Railway account — keep `AUTH_PASSWORD` secret and the deployment private.
+- OAuth state (client registration, session tokens, owner) persists in the `/app/data` volume, surviving redeploys. Keep the deployment private.
 
 ## Local development
 
 ```bash
 npm install
-cp .env.example .env   # fill in RAILWAY_API_TOKEN and AUTH_PASSWORD
+cp .env.example .env   # PUBLIC_URL must be reachable for the OAuth callback
 npm start
 ```
 
