@@ -20,7 +20,7 @@ Auth is **Login with Railway** (identity only — it gates *who* may connect). T
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GITHUB_TOKEN` | Yes | A GitHub Personal Access Token. A **classic** token with the `repo` scope is recommended; fine-grained tokens can't create repositories. |
+| `GITHUB_TOKEN` | Yes | A GitHub Personal Access Token. A **fine-grained** token (Contents + Pull requests + Administration = Read/write, Metadata = Read) is recommended; a **classic** token with the `repo` scope also works. |
 | `ALLOWED_RAILWAY_EMAILS` | No | Comma-separated Railway emails allowed to connect. If empty, the **first verified login becomes the owner** and the only one allowed (trust-on-first-use). |
 | `RAILWAY_OAUTH_CLIENT_ID` / `RAILWAY_OAUTH_CLIENT_SECRET` | No | A pre-registered OAuth app. If unset, the server **self-registers** via Dynamic Client Registration at boot. |
 | `PUBLIC_URL` | Auto | Set by `railway.toml` to your service's public domain. |
@@ -29,7 +29,13 @@ Auth is **Login with Railway** (identity only — it gates *who* may connect). T
 
 ### Getting a GitHub token
 
-Classic token (recommended): [github.com/settings/tokens](https://github.com/settings/tokens) → **Generate new token (classic)** → select the **repo** scope → generate and copy it immediately.
+**Fine-grained (recommended)** — [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens) → **Generate new token** → Repository access: **All repositories** (or select) → Permissions:
+- **Metadata:** Read
+- **Contents:** Read and write
+- **Pull requests:** Read and write
+- **Administration:** Read and write — *this is what enables creating repositories*
+
+**Classic (simpler, coarser)** — [github.com/settings/tokens](https://github.com/settings/tokens) → **Generate new token (classic)** → the **`repo`** scope. Note `repo` grants full control of *all* repos you can access (including orgs you belong to), so the fine-grained option above has a smaller blast radius.
 
 ## Connect it to Claude
 

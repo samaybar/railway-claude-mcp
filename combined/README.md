@@ -19,7 +19,7 @@ Identical to the standalone servers: **Login with Railway** (OAuth 2.1 + OIDC, P
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GITHUB_TOKEN` | No | Enables the GitHub toolset. Classic token, `repo` scope. |
+| `GITHUB_TOKEN` | No | Enables the GitHub toolset. Recommended: a fine-grained token with Contents + Pull requests + Administration = Read/write and Metadata = Read; a classic `repo`-scope token also works. |
 | `RAILWAY_API_TOKEN` | No | Static override; default is to act as the logged-in user. |
 | `ALLOWED_RAILWAY_EMAILS` | No | Comma-separated allowed emails; else trust-on-first-use. |
 | `RAILWAY_OAUTH_CLIENT_ID` / `_SECRET` | No | Pre-registered OAuth app; else DCR self-registration. |
