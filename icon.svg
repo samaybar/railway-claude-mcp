@@ -1,0 +1,34 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8B6CFF"/>
+      <stop offset="1" stop-color="#5326CC"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.6">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- app-icon rounded square -->
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="116" fill="url(#glow)"/>
+
+  <!-- hub-and-spokes: one connector linking three services -->
+  <g stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-opacity="0.92">
+    <line x1="256" y1="256" x2="256" y2="138"/>
+    <line x1="256" y1="256" x2="150" y2="356"/>
+    <line x1="256" y1="256" x2="362" y2="356"/>
+  </g>
+
+  <!-- outer nodes -->
+  <g fill="#ffffff">
+    <circle cx="256" cy="138" r="30"/>
+    <circle cx="150" cy="356" r="30"/>
+    <circle cx="362" cy="356" r="30"/>
+  </g>
+
+  <!-- central hub (the connector) -->
+  <circle cx="256" cy="256" r="46" fill="#ffffff"/>
+  <circle cx="256" cy="256" r="20" fill="#6A45F0"/>
+</svg>
