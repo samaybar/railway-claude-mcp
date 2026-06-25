@@ -2337,6 +2337,61 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+// --- Landing page: shows the deployer their connector URL + how to add it ---
+// Public (unauthenticated) — exposes only the already-public /mcp URL and
+// whether GitHub tools are on. No secrets, allowlist, or owner info here.
+app.get("/", (_req, res) => {
+  const mcpUrl = `${PUBLIC_URL}/mcp`;
+  const gh = octokit
+    ? "GitHub tools are <b>enabled</b>."
+    : "Running <b>Railway-only</b> — set <code>GITHUB_TOKEN</code> to enable the GitHub tools.";
+  res.type("html").send(`<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Railway + GitHub MCP</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; min-height: 100vh; display: flex;
+    align-items: center; justify-content: center; padding: 24px;
+    background: linear-gradient(135deg, #8B6CFF, #5326CC); color: #1c1f26; }
+  .card { background: #fff; border-radius: 16px; padding: 2rem; max-width: 520px; width: 100%;
+    box-shadow: 0 8px 40px rgba(0,0,0,.18); }
+  h1 { font-size: 1.4rem; margin-bottom: .25rem; }
+  .sub { color: #666; font-size: .95rem; margin-bottom: 1.5rem; }
+  label { font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #6A45F0; }
+  .url { display: flex; gap: 8px; margin: .5rem 0 1.5rem; }
+  .url code { flex: 1; background: #f3f0fb; border: 1px solid #e0d8f5; border-radius: 8px;
+    padding: .7rem .8rem; font-family: ui-monospace, Menlo, monospace; font-size: .9rem;
+    overflow-x: auto; white-space: nowrap; }
+  button { background: #6A45F0; color: #fff; border: none; border-radius: 8px; padding: 0 1rem;
+    font-size: .85rem; font-weight: 600; cursor: pointer; }
+  button:hover { background: #5a37d8; }
+  ol { margin: 0 0 1.25rem 1.1rem; font-size: .92rem; line-height: 1.7; }
+  .note { font-size: .85rem; color: #555; background: #f6f4fb; border-radius: 8px; padding: .7rem .8rem; }
+  a { color: #6A45F0; }
+</style></head>
+<body>
+  <div class="card">
+    <h1>Railway + GitHub MCP</h1>
+    <div class="sub">One connector for Claude — manage your Railway projects and GitHub repos from chat.</div>
+
+    <label>Add this connector to Claude</label>
+    <div class="url">
+      <code id="u">${mcpUrl}</code>
+      <button onclick="navigator.clipboard.writeText('${mcpUrl}');this.textContent='Copied'">Copy</button>
+    </div>
+
+    <ol>
+      <li>In Claude: <b>Settings → Connectors → Add custom connector</b></li>
+      <li>Paste the URL above and save</li>
+      <li>Click <b>Connect</b> → <b>Log in with Railway</b></li>
+    </ol>
+
+    <div class="note">${gh} Custom connectors require a paid Claude plan.</div>
+  </div>
+</body></html>`);
+});
+
 // --- RFC 9728: Protected Resource Metadata ---
 app.get("/.well-known/oauth-protected-resource", (_req, res) => {
   res.json({
