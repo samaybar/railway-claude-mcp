@@ -1492,7 +1492,19 @@ function createRailwayMcpServer(railwayToken, githubToken) {
 
   // -- GitHub connection (device flow) — these are always available so the
   //    user can connect; the action tools below appear once connected. --
-  const octokit = githubToken ? new Octokit({ auth: githubToken }) : null;
+  // When GitHub isn't connected, octokit is a proxy that throws a friendly
+  // error on use — so the GitHub tools can stay listed (stable tool list)
+  // and just tell the user to run connect-github.
+  const octokit = githubToken
+    ? new Octokit({ auth: githubToken })
+    : new Proxy(
+        {},
+        {
+          get() {
+            throw new Error("GitHub isn't connected yet — run connect-github first.");
+          },
+        }
+      );
 
   server.tool(
     "connect-github",
@@ -1535,8 +1547,8 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- GitHub action tools (registered once GitHub is connected) --
-  if (octokit) {
+  // -- GitHub action tools (always listed; they error helpfully until connect-github) --
+  {
   // -- check-connection --
   server.tool(
     "check-connection",
