@@ -51,10 +51,18 @@ const ALLOWED_RAILWAY_EMAILS = (process.env.ALLOWED_RAILWAY_EMAILS || "")
   .map((s) => s.trim().toLowerCase())
   .filter(Boolean);
 
-// GitHub API: the GitHub toolset is enabled only when GITHUB_TOKEN is set.
-// (Login with Railway authenticates the human; GitHub calls use this token.)
+// GitHub: tools call the GitHub API using either a connected GitHub App token
+// (obtained via the `connect-github` device flow) or a static GITHUB_TOKEN PAT.
+// GITHUB_TOKEN is an optional fallback; the preferred path is connect-github.
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
-const octokit = GITHUB_TOKEN ? new Octokit({ auth: GITHUB_TOKEN }) : null;
+// The Railway Claude MCP GitHub App (device flow). client_id is public.
+const GITHUB_OAUTH_CLIENT_ID =
+  process.env.GITHUB_OAUTH_CLIENT_ID || "Iv23liV2s2zp1qdWMYdq";
+const GITHUB_APP_SLUG = process.env.GITHUB_APP_SLUG || "railway-github-claude-mcp";
+const GITHUB_DEVICE = {
+  code: "https://github.com/login/device/code",
+  token: "https://github.com/login/oauth/access_token",
+};
 
 // Parse a truthy env var: accepts true/1/yes/on (case-insensitive).
 // Anything else (including unset) is falsy. Defaults to OFF so merging this
@@ -86,6 +94,12 @@ let owner = null;
 const pendingAuth = new Map();
 const PENDING_AUTH_TTL = 10 * 60 * 1000;
 
+// Connected GitHub App token (from the connect-github device flow):
+// { accessToken, refreshToken, expiresAt, login }. Persisted to the volume.
+let githubAuth = null;
+// In-flight device-flow poll: { device_code, expiresAt }.
+let pendingGitHub = null;
+
 const ACCESS_TOKEN_TTL = 7 * 24 * 60 * 60 * 1000;
 const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60 * 1000;
 const AUTH_CODE_TTL = 5 * 60 * 1000;
@@ -104,6 +118,7 @@ function loadStore() {
     }
     if (data.railwayClientReg) railwayClientReg = data.railwayClientReg;
     if (data.owner) owner = data.owner;
+    if (data.github) githubAuth = data.github;
     console.log(
       `Loaded ${registeredClients.size} clients, ${accessTokens.size} access tokens, ${refreshTokens.size} refresh tokens` +
         (owner ? `, owner=${owner.email}` : "")
@@ -122,6 +137,7 @@ function saveStore() {
       refreshTokens: [...refreshTokens.entries()],
       railwayClientReg,
       owner,
+      github: githubAuth,
     };
     fs.writeFileSync(STORE_PATH, JSON.stringify(data), "utf-8");
   } catch (err) {
@@ -417,7 +433,7 @@ function maskValue(value) {
 // `railwayToken` is the bearer used for every Railway API call in this request:
 // either the static RAILWAY_API_TOKEN override or the connecting user's
 // Login-with-Railway access token (resolved + refreshed per request).
-function createRailwayMcpServer(railwayToken) {
+function createRailwayMcpServer(railwayToken, githubToken) {
   const server = new McpServer(
     {
       name: "railway-github-mcp",
@@ -1474,7 +1490,52 @@ function createRailwayMcpServer(railwayToken) {
   // -- volume tools (create-volume, list-volumes, delete-volume) --
   registerVolumeTools(server, { gqlRequest, resolveEnvironmentId });
 
-  // -- GitHub tools (registered only when GITHUB_TOKEN is configured) --
+  // -- GitHub connection (device flow) — these are always available so the
+  //    user can connect; the action tools below appear once connected. --
+  const octokit = githubToken ? new Octokit({ auth: githubToken }) : null;
+
+  server.tool(
+    "connect-github",
+    "Connect your GitHub account so the GitHub tools work. Returns an install link (to choose which repos the agent can touch) and a one-time code to authorize at github.com/login/device.",
+    {},
+    async () => {
+      try {
+        const d = await githubDeviceStart();
+        startGitHubDevicePoll(d);
+        const installUrl = `https://github.com/apps/${GITHUB_APP_SLUG}/installations/new`;
+        const mins = Math.round((d.expires_in || 900) / 60);
+        return toolResponse(
+          `**Connect GitHub — two quick steps:**\n\n` +
+            `1. **Install the app & pick repos:** ${installUrl}\n` +
+            `2. **Authorize:** open ${d.verification_uri} and enter code **${d.user_code}**\n\n` +
+            `I'll detect it automatically (within ~${mins} min). Run **github-status** to confirm. ` +
+            `Once connected, the GitHub tools activate — you may need to reconnect this connector in Claude for them to appear.`
+        );
+      } catch (e) {
+        return toolResponse(`Failed to start GitHub connect: ${e.message}`);
+      }
+    }
+  );
+
+  server.tool(
+    "github-status",
+    "Check whether GitHub is connected, and as which account.",
+    {},
+    async () => {
+      const t = await resolveGitHubToken();
+      if (!t) return toolResponse("GitHub is not connected. Run connect-github to connect.");
+      try {
+        const me = await new Octokit({ auth: t }).users.getAuthenticated();
+        return toolResponse(`GitHub connected as **${me.data.login}**. The GitHub tools are active.`);
+      } catch (e) {
+        return toolResponse(
+          `A GitHub token is set but the check failed (${e.message}). It may be expired, or the app may need to be installed on your repos.`
+        );
+      }
+    }
+  );
+
+  // -- GitHub action tools (registered once GitHub is connected) --
   if (octokit) {
   // -- check-connection --
   server.tool(
@@ -2316,6 +2377,126 @@ async function resolveRailwayAccessToken(mcpToken) {
 }
 
 // ---------------------------------------------------------------------------
+// GitHub App device flow (connect-github)
+// ---------------------------------------------------------------------------
+
+// Start a device-flow authorization; returns { user_code, verification_uri,
+// device_code, interval, expires_in }.
+async function githubDeviceStart() {
+  const res = await fetch(GITHUB_DEVICE.code, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: GITHUB_OAUTH_CLIENT_ID }),
+  });
+  if (!res.ok) throw new Error(`device code request failed (${res.status})`);
+  const d = await res.json();
+  if (d.error) throw new Error(d.error_description || d.error);
+  return d;
+}
+
+// Poll GitHub in the background until the user authorizes, then store the token.
+function startGitHubDevicePoll(d) {
+  pendingGitHub = {
+    device_code: d.device_code,
+    expiresAt: Date.now() + (d.expires_in || 900) * 1000,
+  };
+  let interval = (d.interval || 5) * 1000;
+  const poll = async () => {
+    if (!pendingGitHub || Date.now() > pendingGitHub.expiresAt) {
+      pendingGitHub = null;
+      return;
+    }
+    try {
+      const res = await fetch(GITHUB_DEVICE.token, {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: GITHUB_OAUTH_CLIENT_ID,
+          device_code: pendingGitHub.device_code,
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        }),
+      });
+      const t = await res.json();
+      if (t.access_token) {
+        githubAuth = {
+          accessToken: t.access_token,
+          refreshToken: t.refresh_token || null,
+          expiresAt: t.expires_in ? Date.now() + t.expires_in * 1000 : null,
+          login: null,
+        };
+        pendingGitHub = null;
+        saveStore();
+        try {
+          const me = await new Octokit({ auth: t.access_token }).users.getAuthenticated();
+          githubAuth.login = me.data.login;
+          saveStore();
+          console.log(`[github] connected as ${me.data.login}`);
+        } catch {
+          console.log("[github] connected (login lookup failed)");
+        }
+        return;
+      }
+      if (t.error === "slow_down") interval += 5000;
+      else if (t.error === "expired_token" || t.error === "access_denied") {
+        console.log(`[github] device flow ${t.error}`);
+        pendingGitHub = null;
+        return;
+      }
+      // otherwise authorization_pending — keep polling
+    } catch (e) {
+      console.error("[github] poll error:", e.message);
+    }
+    setTimeout(poll, interval);
+  };
+  setTimeout(poll, interval);
+}
+
+async function refreshGitHubToken(refreshToken) {
+  try {
+    const res = await fetch(GITHUB_DEVICE.token, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: GITHUB_OAUTH_CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    });
+    const t = await res.json();
+    if (t.access_token) {
+      githubAuth = {
+        ...githubAuth,
+        accessToken: t.access_token,
+        refreshToken: t.refresh_token || githubAuth.refreshToken,
+        expiresAt: t.expires_in ? Date.now() + t.expires_in * 1000 : null,
+      };
+      saveStore();
+      return t.access_token;
+    }
+  } catch (e) {
+    console.error("[github] refresh failed:", e.message);
+  }
+  return null;
+}
+
+// Resolve the GitHub bearer for a request: connected device-flow token
+// (refreshed if stale), else the static GITHUB_TOKEN, else null.
+async function resolveGitHubToken() {
+  if (githubAuth?.accessToken) {
+    if (!githubAuth.expiresAt || Date.now() < githubAuth.expiresAt - 60 * 1000) {
+      return githubAuth.accessToken;
+    }
+    if (githubAuth.refreshToken) {
+      const fresh = await refreshGitHubToken(githubAuth.refreshToken);
+      if (fresh) return fresh;
+    }
+    return githubAuth.accessToken;
+  }
+  if (GITHUB_TOKEN) return GITHUB_TOKEN;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Express app with OAuth
 // ---------------------------------------------------------------------------
 const app = express();
@@ -2342,21 +2523,20 @@ app.get("/health", (_req, res) => {
 // whether GitHub tools are on. No secrets, allowlist, or owner info here.
 app.get("/", (_req, res) => {
   const mcpUrl = `${PUBLIC_URL}/mcp`;
-  const ghEnabled = !!octokit;
+  const ghEnabled = !!githubAuth?.accessToken || !!GITHUB_TOKEN;
   const tokenLink =
     "https://github.com/settings/tokens/new?scopes=repo&description=Railway-GitHub-MCP";
 
   const ghPro = ghEnabled
     ? `<div class="note">✓ GitHub tools are <b>enabled</b>. Custom connectors require a paid Claude plan.</div>`
-    : `<div class="note"><b>GitHub is optional</b> (Railway tools work without it). To enable: <a href="${tokenLink}" target="_blank" rel="noopener">create a token</a> (scope pre-selected), then set <code>GITHUB_TOKEN</code> in this service's <b>Variables</b>. Custom connectors require a paid Claude plan.</div>`;
+    : `<div class="note"><b>GitHub is optional</b> (Railway tools work without it). Easiest: ask Claude to run <code>connect-github</code> — it walks you through installing the app + picking repos, no token to paste. Or set a <code>GITHUB_TOKEN</code> variable manually. Custom connectors require a paid Claude plan.</div>`;
 
   const ghNew = ghEnabled
     ? `<li><b>GitHub is already connected</b> ✓ — you can also ask Claude to read and write your code (e.g. "create a repo and push a hello-world app").</li>`
     : `<li><b>Optional: connect GitHub</b> so Claude can store and write your code (create repos, commit files, open pull requests):
         <ol class="sub-ol">
-          <li>No GitHub account? <a href="https://github.com/signup" target="_blank" rel="noopener">Sign up free</a> first.</li>
-          <li><a href="${tokenLink}" target="_blank" rel="noopener">Create a token</a> — the <code>repo</code> permission is pre-selected. Click <b>Generate token</b> and copy it.</li>
-          <li>In this Railway service, open <b>Variables</b>, add one named <code>GITHUB_TOKEN</code>, and paste the token. It redeploys and the GitHub tools switch on.</li>
+          <li><b>Easiest:</b> once you've added the connector and logged in, ask Claude to run <code>connect-github</code>. It gives you a link to install the app (pick which repos it can touch) and a code to authorize — no token to copy. New to GitHub? <a href="https://github.com/signup" target="_blank" rel="noopener">Sign up free</a> first.</li>
+          <li><b>Or manually:</b> <a href="${tokenLink}" target="_blank" rel="noopener">create a token</a> (<code>repo</code> pre-selected) and set it as a <code>GITHUB_TOKEN</code> variable on this service.</li>
         </ol>
         You can skip this for now and add it anytime.</li>`;
 
@@ -2739,10 +2919,12 @@ app.post("/mcp", checkAuth, async (req, res) => {
       });
     }
 
+    const githubToken = await resolveGitHubToken();
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
-    const server = createRailwayMcpServer(railwayToken);
+    const server = createRailwayMcpServer(railwayToken, githubToken);
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (err) {
@@ -2796,7 +2978,15 @@ ensureRailwayClient().finally(() => {
     console.log(`Railway MCP server listening on port ${PORT}`);
     console.log(`Public URL: ${PUBLIC_URL}`);
     console.log("Auth: Login with Railway (OAuth 2.0 / OIDC + PKCE)");
-    console.log(`GitHub tools: ${octokit ? "enabled" : "disabled (set GITHUB_TOKEN)"}`);
+    console.log(
+      `GitHub: ${
+        githubAuth?.accessToken
+          ? `connected as ${githubAuth.login || "?"}`
+          : GITHUB_TOKEN
+          ? "static GITHUB_TOKEN"
+          : "not connected (use connect-github)"
+      }`
+    );
     console.log(
       `Railway OAuth client: ${railwayClientReg?.client_id || "NOT REGISTERED — set RAILWAY_OAUTH_CLIENT_ID/SECRET"}`
     );
