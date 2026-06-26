@@ -59,6 +59,13 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const GITHUB_OAUTH_CLIENT_ID =
   process.env.GITHUB_OAUTH_CLIENT_ID || "Iv23liV2s2zp1qdWMYdq";
 const GITHUB_APP_SLUG = process.env.GITHUB_APP_SLUG || "railway-github-claude-mcp";
+// Railway's OWN first-party GitHub App (separate from this connector's app) — the
+// one Railway uses to deploy from repos. Slug is "railway-app" in prod (see
+// backboard RAILWAY_BOT_NAME). This deep link drops the user straight into the
+// install/configure flow so they can grant repo access. Overridable for self-hosters.
+const RAILWAY_GITHUB_APP_URL =
+  process.env.RAILWAY_GITHUB_APP_URL ||
+  "https://github.com/apps/railway-app/installations/new";
 const GITHUB_DEVICE = {
   code: "https://github.com/login/device/code",
   token: "https://github.com/login/oauth/access_token",
@@ -1408,7 +1415,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
                 `Use railway-list-deployments to watch the build.\n\n` +
                 `If the build can't fetch the repo, either no repo is connected to this service yet ` +
                 `(recreate it with railway-create-service-from-github), or Railway's GitHub App lacks access to a private repo ` +
-                `(grant it at https://github.com/settings/installations, or make the repo public).`
+                `(authorize it at ${RAILWAY_GITHUB_APP_URL}, or make the repo public — call railway-github-access for the walkthrough).`
             );
           } catch (freshErr) {
             return toolResponse(
@@ -1529,12 +1536,10 @@ function createRailwayMcpServer(railwayToken, githubToken) {
               `Railway couldn't connect the repo **${repo}**:\n\n` +
                 `> ${msg}\n\n` +
                 `This is the separate-GitHub-App gap. The repo was created through your connector's GitHub App, but **Railway's own GitHub App** hasn't been granted access to it, and Railway can only deploy from repos its App can see (private repos in particular require an explicit grant).\n\n` +
-                `**Fastest durable fix (recommended when you build from Claude a lot):** give Railway's GitHub App access to *all* your repos, so every repo created here just works:\n` +
-                `1. Open https://github.com/settings/installations\n` +
-                `2. Click **Railway → Configure**\n` +
-                `3. Under *Repository access*, choose **All repositories**, then Save.\n\n` +
-                `**Or grant just this repo:** same screen, choose *Only select repositories* and add **${repo}**.\n\n` +
+                `**One-click fix:** install/authorize Railway's GitHub App here → ${RAILWAY_GITHUB_APP_URL}\n` +
+                `On that screen, under *Repository access* choose **All repositories** (recommended if you build from Claude often, so every new repo just works) or *Only select repositories* and add **${repo}**, then Install & Authorize.\n\n` +
                 `**Or make the repo public** (ask me and I'll flip it) — that skips the App-access requirement entirely.\n\n` +
+                `(Want the full walkthrough? Call railway-github-access.)\n\n` +
                 `${shellNote}\n\n` +
                 `Once access is sorted, just ask me to deploy ${repo} again and I'll recreate the service cleanly.`
             );
@@ -1668,6 +1673,37 @@ function createRailwayMcpServer(railwayToken, githubToken) {
       } catch (error) {
         return toolResponse(`Failed to update the connector: ${error.message}`);
       }
+    }
+  );
+
+  // -- railway-github-access --
+  // Tells the user exactly how to let Railway deploy from their (private) repos by
+  // installing/authorizing Railway's first-party GitHub App. Call this whenever a
+  // deploy fails with "User does not have access to the repo", or when the user asks
+  // how to connect GitHub to Railway. Not in TOOL_GROUP → always available.
+  server.tool(
+    "railway-github-access",
+    "Explain how to install/authorize Railway's GitHub App so Railway can deploy the user's repos (especially private ones). Returns the direct one-click setup link and step-by-step instructions. Use this when a deploy fails because Railway can't access a repo, or when the user asks how to give Railway access to GitHub.",
+    {
+      repo: z
+        .string()
+        .optional()
+        .describe("Optional owner/name of the specific repo to grant access to, for tailored wording"),
+    },
+    async ({ repo }) => {
+      const target = repo ? `**${repo}**` : "your repo";
+      return toolResponse(
+        `To let Railway deploy ${target}, Railway's own GitHub App needs access to it. This is a one-time, browser-based step (GitHub requires you to approve it yourself — it can't be done via the API).\n\n` +
+          `**One-click setup:** ${RAILWAY_GITHUB_APP_URL}\n\n` +
+          `On that screen:\n` +
+          `1. Pick the account/org that owns the repo${repo ? ` (${repo.split("/")[0]})` : ""}.\n` +
+          `2. Under **Repository access**, choose either:\n` +
+          `   - **All repositories** — recommended if you build from Claude often, so every repo you create here just works with no extra steps, or\n` +
+          `   - **Only select repositories** and add ${repo ? `**${repo}**` : "the repo you want to deploy"}.\n` +
+          `3. Click **Install & Authorize** (or **Save** if Railway's App is already installed).\n\n` +
+          `That's it — come back and ask me to deploy again.\n\n` +
+          `**Don't want to grant access?** Make the repo **public** instead (ask me and I'll switch it) — public repos deploy without the App needing per-repo access.`
+      );
     }
   );
 
@@ -1870,7 +1906,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
         const privacyNote = data.private
           ? `\n\nIt's **private** by default — that keeps your code and any secrets out of public view. ` +
             `One heads-up: to deploy a private repo on Railway, Railway's GitHub App needs access to it ` +
-            `(set it to *All repositories* once at https://github.com/settings/installations, or grant this repo when prompted). ` +
+            `(authorize Railway's GitHub App once at ${RAILWAY_GITHUB_APP_URL} — choose *All repositories* so future repos just work, or grant this one). ` +
             `Prefer it public instead? Just ask and I'll switch it.`
           : `\n\nIt's **public**.`;
 
