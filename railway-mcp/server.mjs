@@ -1033,6 +1033,98 @@ function createRailwayMcpServer(railwayToken) {
     }
   );
 
+  // -- list-domains --
+  server.tool(
+    "list-domains",
+    "List the domains attached to a service: both Railway-provided domains (the *.up.railway.app hosts) and any custom domains. environmentId defaults to the project's production environment. Read-only counterpart to generate-domain — use it to find a service's public URL.",
+    {
+      projectId: z.string().describe("The project ID"),
+      environmentId: z
+        .string()
+        .optional()
+        .describe(
+          "The environment ID (defaults to the project's production environment)"
+        ),
+      serviceId: z.string().describe("The service ID"),
+    },
+    async ({ projectId, environmentId, serviceId }) => {
+      try {
+        const envId = await resolveEnvironmentId(projectId, environmentId);
+        const data = await gqlRequest(
+          gql`
+            query ($projectId: String!, $environmentId: String!, $serviceId: String!) {
+              domains(
+                projectId: $projectId
+                environmentId: $environmentId
+                serviceId: $serviceId
+              ) {
+                serviceDomains {
+                  id
+                  domain
+                  targetPort
+                }
+                customDomains {
+                  id
+                  domain
+                  targetPort
+                  status {
+                    dnsRecords {
+                      hostlabel
+                      recordType
+                      requiredValue
+                      currentValue
+                      status
+                    }
+                  }
+                }
+              }
+            }
+          `,
+          { projectId, environmentId: envId, serviceId }
+        );
+
+        const svc = data.domains?.serviceDomains || [];
+        const custom = data.domains?.customDomains || [];
+
+        if (svc.length === 0 && custom.length === 0) {
+          return toolResponse(
+            "No domains found for this service. Use generate-domain to create one."
+          );
+        }
+
+        const fmtPort = (p) => (p ? ` → port ${p}` : "");
+        const lines = [];
+
+        if (svc.length) {
+          lines.push("**Railway domains:**");
+          for (const d of svc) {
+            lines.push(`- https://${d.domain}${fmtPort(d.targetPort)}`);
+          }
+        }
+        if (custom.length) {
+          if (lines.length) lines.push("");
+          lines.push("**Custom domains:**");
+          for (const d of custom) {
+            const records = d.status?.dnsRecords || [];
+            const ok =
+              records.length > 0 &&
+              records.every((r) => (r.status || "").toUpperCase() === "VALID");
+            const state = records.length
+              ? ok
+                ? "verified"
+                : "pending DNS"
+              : "no DNS records";
+            lines.push(`- https://${d.domain}${fmtPort(d.targetPort)} (${state})`);
+          }
+        }
+
+        return toolResponse(lines.join("\n"));
+      } catch (error) {
+        return toolResponse(`Failed to list domains: ${error.message}`);
+      }
+    }
+  );
+
   // -- create-environment --
   server.tool(
     "create-environment",
