@@ -19,12 +19,15 @@ Identical to the standalone servers: **Login with Railway** (OAuth 2.1 + OIDC, P
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GITHUB_TOKEN` | No | Enables the GitHub toolset. Recommended: a fine-grained token with Contents + Pull requests + Administration = Read/write and Metadata = Read; a classic `repo`-scope token also works. |
+| `RAILWAY_MODE` | No | Railway capability: `read`, `deploy` (default), or `full` (adds delete). |
+| `GITHUB_MODE` | No | GitHub capability: `off`, `read`, or `write` (default). `off` hides GitHub entirely. |
+| `GITHUB_TOKEN` | No | Optional **static** GitHub token (fallback). The preferred way to turn on GitHub is the **`connect-github`** tool (GitHub App device flow). Token form: fine-grained with Contents + Pull requests + Administration = R/W, Metadata = Read; or classic `repo`. |
 | `RAILWAY_API_TOKEN` | No | Static override; default is to act as the logged-in user. |
 | `ALLOWED_RAILWAY_EMAILS` | No | Comma-separated allowed emails; else trust-on-first-use. |
 | `RAILWAY_OAUTH_CLIENT_ID` / `_SECRET` | No | Pre-registered OAuth app; else DCR self-registration. |
+| `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_APP_SLUG` | No | The GitHub App that `connect-github` uses (defaults baked in). |
 | `PUBLIC_URL` | Auto | Derived from `RAILWAY_PUBLIC_DOMAIN`. |
-| `DATA_DIR` | Auto | `/app/data` volume for OAuth state. |
+| `DATA_DIR` | Auto | `/app/data` volume for OAuth + GitHub token state. |
 
 ## Connect to Claude
 

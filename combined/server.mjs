@@ -64,6 +64,20 @@ const GITHUB_DEVICE = {
   token: "https://github.com/login/oauth/access_token",
 };
 
+// Capability scoping (least privilege), one knob per provider:
+//   RAILWAY_MODE = read | deploy (default) | full   (full adds delete)
+//   GITHUB_MODE  = off | read | write (default)     (off hides GitHub entirely)
+const RAILWAY_MODE = ["read", "deploy", "full"].includes(
+  (process.env.RAILWAY_MODE || "").toLowerCase()
+)
+  ? process.env.RAILWAY_MODE.toLowerCase()
+  : "deploy";
+const GITHUB_MODE = ["off", "read", "write"].includes(
+  (process.env.GITHUB_MODE || "").toLowerCase()
+)
+  ? process.env.GITHUB_MODE.toLowerCase()
+  : "write";
+
 // Parse a truthy env var: accepts true/1/yes/on (case-insensitive).
 // Anything else (including unset) is falsy. Defaults to OFF so merging this
 // does not suddenly flood the channel.
@@ -442,6 +456,47 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     },
     { capabilities: { logging: {} } }
   );
+
+  // --- Capability gating (RAILWAY_MODE / GITHUB_MODE) ---
+  // Wrap tool registration so disallowed tools are simply never registered.
+  // Tools not in TOOL_GROUP (Railway read tools, check-railway-status, etc.)
+  // are always allowed. Provider modes:
+  //   railwayCan.deploy/del ; githubCan.read/write
+  const railwayCan = {
+    deploy: RAILWAY_MODE === "deploy" || RAILWAY_MODE === "full",
+    del: RAILWAY_MODE === "full",
+  };
+  const githubCan = {
+    read: GITHUB_MODE === "read" || GITHUB_MODE === "write",
+    write: GITHUB_MODE === "write",
+  };
+  const TOOL_GROUP = {
+    "create-project": "rwd", "create-environment": "rwd", "set-variables": "rwd",
+    "create-service-from-github": "rwd", "deploy-template": "rwd", "redeploy-service": "rwd",
+    "generate-domain": "rwd", "create-volume": "rwd", "query-postgres": "rwd",
+    "delete-service": "rwx", "delete-volume": "rwx",
+    "connect-github": "ghr", "github-status": "ghr", "check-connection": "ghr",
+    "list-repos": "ghr", "get-repo": "ghr", "list-branches": "ghr", "get-file": "ghr",
+    "list-pull-requests": "ghr", "get-pull-request": "ghr", "search-code": "ghr",
+    "list-commits": "ghr", "get-diff": "ghr",
+    "create-repo": "ghw", "create-or-update-file": "ghw", "patch-file": "ghw",
+    "delete-file": "ghw", "create-branch": "ghw", "create-pull-request": "ghw",
+  };
+  const allowedTool = (g) =>
+    g == null
+      ? true
+      : g === "rwd"
+      ? railwayCan.deploy
+      : g === "rwx"
+      ? railwayCan.del
+      : g === "ghr"
+      ? githubCan.read
+      : g === "ghw"
+      ? githubCan.write
+      : true;
+  const _registerTool = server.tool.bind(server);
+  server.tool = (name, ...rest) =>
+    allowedTool(TOOL_GROUP[name]) ? _registerTool(name, ...rest) : undefined;
 
   const railwayClient = new GraphQLClient(
     "https://backboard.railway.com/graphql/v2",
@@ -2990,6 +3045,7 @@ ensureRailwayClient().finally(() => {
     console.log(`Railway MCP server listening on port ${PORT}`);
     console.log(`Public URL: ${PUBLIC_URL}`);
     console.log("Auth: Login with Railway (OAuth 2.0 / OIDC + PKCE)");
+    console.log(`Capabilities: RAILWAY_MODE=${RAILWAY_MODE}, GITHUB_MODE=${GITHUB_MODE}`);
     console.log(
       `GitHub: ${
         githubAuth?.accessToken
