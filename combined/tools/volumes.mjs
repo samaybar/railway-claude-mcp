@@ -2,9 +2,9 @@
 // Registered against an existing McpServer instance.
 //
 // Provides:
-//   - create-volume   Create and attach a volume to a service at a mount path
-//   - list-volumes    List all volumes in a project with their attachments
-//   - delete-volume   Permanently delete a volume by ID
+//   - railway-create-volume   Create and attach a volume to a service at a mount path
+//   - railway-list-volumes    List all volumes in a project with their attachments
+//   - railway-delete-volume   Permanently delete a volume by ID
 //
 // Uses the same gqlRequest + resolveEnvironmentId helpers as the main server,
 // passed in via the deps argument so we don't duplicate the GraphQL client.
@@ -19,9 +19,9 @@ function toolResponse(text) {
 export function registerVolumeTools(server, deps) {
   const { gqlRequest, resolveEnvironmentId } = deps;
 
-  // -- create-volume --
+  // -- railway-create-volume --
   server.tool(
-    "create-volume",
+    "railway-create-volume",
     "Create a new volume and attach it to a service at the given mount path. The service will be redeployed automatically by Railway. environmentId defaults to the project's production environment.",
     {
       projectId: z.string().describe("The project ID"),
@@ -85,9 +85,9 @@ export function registerVolumeTools(server, deps) {
     }
   );
 
-  // -- list-volumes --
+  // -- railway-list-volumes --
   server.tool(
-    "list-volumes",
+    "railway-list-volumes",
     "List all volumes in a project, including which services they are attached to and their mount paths.",
     {
       projectId: z.string().describe("The project ID"),
@@ -155,9 +155,9 @@ export function registerVolumeTools(server, deps) {
     }
   );
 
-  // -- delete-volume --
+  // -- railway-delete-volume --
   server.tool(
-    "delete-volume",
+    "railway-delete-volume",
     "Delete a volume by ID. This permanently destroys the volume and its data — use with care.",
     {
       volumeId: z.string().describe("The volume ID to delete"),

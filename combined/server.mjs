@@ -52,8 +52,8 @@ const ALLOWED_RAILWAY_EMAILS = (process.env.ALLOWED_RAILWAY_EMAILS || "")
   .filter(Boolean);
 
 // GitHub: tools call the GitHub API using either a connected GitHub App token
-// (obtained via the `connect-github` device flow) or a static GITHUB_TOKEN PAT.
-// GITHUB_TOKEN is an optional fallback; the preferred path is connect-github.
+// (obtained via the `github-connect` device flow) or a static GITHUB_TOKEN PAT.
+// GITHUB_TOKEN is an optional fallback; the preferred path is github-connect.
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 // The Railway Claude MCP GitHub App (device flow). client_id is public.
 const GITHUB_OAUTH_CLIENT_ID =
@@ -108,7 +108,7 @@ let owner = null;
 const pendingAuth = new Map();
 const PENDING_AUTH_TTL = 10 * 60 * 1000;
 
-// Connected GitHub App token (from the connect-github device flow):
+// Connected GitHub App token (from the github-connect device flow):
 // { accessToken, refreshToken, expiresAt, login }. Persisted to the volume.
 let githubAuth = null;
 // In-flight device-flow poll: { device_code, expiresAt }.
@@ -259,34 +259,34 @@ setInterval(() => {
 
 // Tools flagged here generate a Discord alert on invocation. Most are
 // state-changing. Two exceptions are listed here even though they only *read*:
-//   - query-postgres: SQL is unconstrained; can be read OR write, always alert
-//   - list-variables: returns plaintext env var values (including secrets);
+//   - railway-query-postgres: SQL is unconstrained; can be read OR write, always alert
+//   - railway-list-variables: returns plaintext env var values (including secrets);
 //     effectively a secrets exfiltration tool, always alert
 const DESTRUCTIVE_TOOLS = new Set([
-  "create-project",
-  "create-environment",
-  "create-service-from-github",
-  "delete-service",
-  "set-variables",
-  "list-variables",
-  "redeploy-service",
-  "deploy-template",
-  "generate-domain",
-  "query-postgres",
-  "create-volume",
-  "delete-volume",
+  "railway-create-project",
+  "railway-create-environment",
+  "railway-create-service-from-github",
+  "railway-delete-service",
+  "railway-set-variables",
+  "railway-list-variables",
+  "railway-redeploy-service",
+  "railway-deploy-template",
+  "railway-generate-domain",
+  "railway-query-postgres",
+  "railway-create-volume",
+  "railway-delete-volume",
 ]);
 
 // Tools that get an extra-attention red color rather than orange.
-// list-variables is critical because anyone calling it with reveal=true can
+// railway-list-variables is critical because anyone calling it with reveal=true can
 // dump every secret on the service in one call (API keys, DB connection
 // strings, etc). Values are masked by default.
 const CRITICAL_TOOLS = new Set([
-  "delete-service",
-  "delete-volume",
-  "set-variables",
-  "list-variables",
-  "query-postgres",
+  "railway-delete-service",
+  "railway-delete-volume",
+  "railway-set-variables",
+  "railway-list-variables",
+  "railway-query-postgres",
 ]);
 
 const SESSION_ALERT_DEBOUNCE_MS = HOUR_MS;
@@ -307,35 +307,35 @@ function truncate(s, n) {
 function extractArgSummary(toolName, args = {}) {
   const a = args || {};
   switch (toolName) {
-    case "create-project":
+    case "railway-create-project":
       return `name=${a.name || "?"}`;
-    case "create-environment":
+    case "railway-create-environment":
       return `project=${a.projectId || "?"} name=${a.name || "?"}`;
-    case "create-service-from-github":
+    case "railway-create-service-from-github":
       return `project=${a.projectId || "?"} repo=${a.repo || "?"}${a.branch ? `@${a.branch}` : ""}`;
-    case "delete-service":
+    case "railway-delete-service":
       return `service=${a.serviceId || "?"}`;
-    case "set-variables": {
+    case "railway-set-variables": {
       const keys = a.variables ? Object.keys(a.variables) : [];
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"} vars=[${keys.join(", ")}]`;
     }
-    case "list-variables":
+    case "railway-list-variables":
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"}${a.environmentId ? ` env=${a.environmentId}` : ""}`;
-    case "redeploy-service":
+    case "railway-redeploy-service":
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"}`;
-    case "deploy-template":
+    case "railway-deploy-template":
       return `template=${a.templateId || "?"}${a.projectId ? ` project=${a.projectId}` : " (new project)"}`;
-    case "generate-domain":
+    case "railway-generate-domain":
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"}${a.targetPort ? ` port=${a.targetPort}` : ""}`;
-    case "query-postgres": {
+    case "railway-query-postgres": {
       // Show the first line of the SQL so you can eyeball SELECT vs. DROP
       // without the full payload bleeding into chat.
       const sql = (a.sql || "").replace(/\s+/g, " ").trim();
       return `sql=${truncate(sql, 160)}`;
     }
-    case "create-volume":
+    case "railway-create-volume":
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"} mount=${a.mountPath || "?"}`;
-    case "delete-volume":
+    case "railway-delete-volume":
       return `volume=${a.volumeId || "?"}`;
     default:
       return "";
@@ -459,7 +459,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
 
   // --- Capability gating (RAILWAY_MODE / GITHUB_MODE) ---
   // Wrap tool registration so disallowed tools are simply never registered.
-  // Tools not in TOOL_GROUP (Railway read tools, check-railway-status, etc.)
+  // Tools not in TOOL_GROUP (Railway read tools, railway-status, etc.)
   // are always allowed. Provider modes:
   //   railwayCan.deploy/del ; githubCan.read/write
   const railwayCan = {
@@ -471,16 +471,16 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     write: GITHUB_MODE === "write",
   };
   const TOOL_GROUP = {
-    "create-project": "rwd", "create-environment": "rwd", "set-variables": "rwd",
-    "create-service-from-github": "rwd", "deploy-template": "rwd", "redeploy-service": "rwd",
-    "generate-domain": "rwd", "create-volume": "rwd", "query-postgres": "rwd",
-    "delete-service": "rwx", "delete-volume": "rwx",
-    "connect-github": "ghr", "github-status": "ghr", "check-connection": "ghr",
-    "list-repos": "ghr", "get-repo": "ghr", "list-branches": "ghr", "get-file": "ghr",
-    "list-pull-requests": "ghr", "get-pull-request": "ghr", "search-code": "ghr",
-    "list-commits": "ghr", "get-diff": "ghr",
-    "create-repo": "ghw", "create-or-update-file": "ghw", "patch-file": "ghw",
-    "delete-file": "ghw", "create-branch": "ghw", "create-pull-request": "ghw",
+    "railway-create-project": "rwd", "railway-create-environment": "rwd", "railway-set-variables": "rwd",
+    "railway-create-service-from-github": "rwd", "railway-deploy-template": "rwd", "railway-redeploy-service": "rwd",
+    "railway-generate-domain": "rwd", "railway-create-volume": "rwd", "railway-query-postgres": "rwd",
+    "railway-delete-service": "rwx", "railway-delete-volume": "rwx",
+    "github-connect": "ghr", "github-status": "ghr", "github-check-connection": "ghr",
+    "github-list-repos": "ghr", "github-get-repo": "ghr", "github-list-branches": "ghr", "github-get-file": "ghr",
+    "github-list-pull-requests": "ghr", "github-get-pull-request": "ghr", "github-search-code": "ghr",
+    "github-list-commits": "ghr", "github-get-diff": "ghr",
+    "github-create-repo": "ghw", "github-create-or-update-file": "ghw", "github-patch-file": "ghw",
+    "github-delete-file": "ghw", "github-create-branch": "ghw", "github-create-pull-request": "ghw",
   };
   const allowedTool = (g) =>
     g == null
@@ -543,10 +543,10 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     return (prod ?? envs[0]).id;
   }
 
-  // -- list-workspaces --
+  // -- railway-list-workspaces --
   server.tool(
-    "list-workspaces",
-    "List the Railway workspaces this connector can access (the ones you granted at login). Use a workspace id with list-projects or create-project.",
+    "railway-list-workspaces",
+    "List the Railway workspaces this connector can access (the ones you granted at login). Use a workspace id with railway-list-projects or railway-create-project.",
     {},
     async () => {
       try {
@@ -576,15 +576,15 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- list-projects --
+  // -- railway-list-projects --
   server.tool(
-    "list-projects",
-    "List Railway projects. Login-with-Railway scopes this connector to the workspaces you granted, so projects are listed per workspace. Pass workspaceId (from list-workspaces) to scope to one.",
+    "railway-list-projects",
+    "List Railway projects. Login-with-Railway scopes this connector to the workspaces you granted, so projects are listed per workspace. Pass workspaceId (from railway-list-workspaces) to scope to one.",
     {
       workspaceId: z
         .string()
         .optional()
-        .describe("Limit to a single workspace id (from list-workspaces)."),
+        .describe("Limit to a single workspace id (from railway-list-workspaces)."),
     },
     async ({ workspaceId }) => {
       try {
@@ -640,17 +640,17 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- create-project --
+  // -- railway-create-project --
   server.tool(
-    "create-project",
-    "Create a new Railway project. With Login-with-Railway auth, pass workspaceId (from list-workspaces) so it lands in a workspace you can access.",
+    "railway-create-project",
+    "Create a new Railway project. With Login-with-Railway auth, pass workspaceId (from railway-list-workspaces) so it lands in a workspace you can access.",
     {
       name: z.string().describe("Name for the new project"),
       workspaceId: z
         .string()
         .optional()
         .describe(
-          "Workspace id to create the project in (from list-workspaces)."
+          "Workspace id to create the project in (from railway-list-workspaces)."
         ),
     },
     async ({ name, workspaceId }) => {
@@ -692,9 +692,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- get-project --
+  // -- railway-get-project --
   server.tool(
-    "get-project",
+    "railway-get-project",
     "Get details of a specific Railway project",
     { projectId: z.string().describe("The project ID") },
     async ({ projectId }) => {
@@ -748,9 +748,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- list-services --
+  // -- railway-list-services --
   server.tool(
-    "list-services",
+    "railway-list-services",
     "List all services in a Railway project",
     { projectId: z.string().describe("The project ID") },
     async ({ projectId }) => {
@@ -793,9 +793,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- list-variables --
+  // -- railway-list-variables --
   server.tool(
-    "list-variables",
+    "railway-list-variables",
     "List environment variables for a service. Values are MASKED by default so secrets don't leak into the conversation; only the variable names and value lengths are shown. Pass reveal=true to return raw values (use sparingly, and never for a service you don't own). environmentId defaults to the project's production environment.",
     {
       projectId: z.string().describe("The project ID"),
@@ -856,9 +856,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- set-variables --
+  // -- railway-set-variables --
   server.tool(
-    "set-variables",
+    "railway-set-variables",
     "Set environment variables for a service. environmentId defaults to the project's production environment.",
     {
       projectId: z.string().describe("The project ID"),
@@ -902,9 +902,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- get-logs --
+  // -- railway-get-logs --
   server.tool(
-    "get-logs",
+    "railway-get-logs",
     "Get deployment logs for a service. environmentId defaults to the project's production environment.",
     {
       projectId: z.string().describe("The project ID"),
@@ -985,9 +985,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- list-deployments --
+  // -- railway-list-deployments --
   server.tool(
-    "list-deployments",
+    "railway-list-deployments",
     "List recent deployments for a service. environmentId defaults to the project's production environment.",
     {
       projectId: z.string().describe("The project ID"),
@@ -1059,9 +1059,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- generate-domain --
+  // -- railway-generate-domain --
   server.tool(
-    "generate-domain",
+    "railway-generate-domain",
     "Generate a Railway domain for a service. environmentId defaults to the project's production environment. targetPort is optional — Railway will auto-detect from the running service if omitted.",
     {
       projectId: z.string().describe("The project ID"),
@@ -1110,9 +1110,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- create-environment --
+  // -- railway-create-environment --
   server.tool(
-    "create-environment",
+    "railway-create-environment",
     "Create a new environment in a Railway project",
     {
       projectId: z.string().describe("The project ID"),
@@ -1147,9 +1147,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- deploy-template --
+  // -- railway-deploy-template --
   server.tool(
-    "deploy-template",
+    "railway-deploy-template",
     "Search for and deploy a Railway template (e.g., databases, apps). When projectId is provided, environmentId defaults to the project's production environment.",
     {
       searchQuery: z
@@ -1292,9 +1292,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- check-railway-status --
+  // -- railway-status --
   server.tool(
-    "check-railway-status",
+    "railway-status",
     "Check Railway platform status and API connectivity",
     {},
     async () => {
@@ -1323,9 +1323,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- redeploy-service --
+  // -- railway-redeploy-service --
   server.tool(
-    "redeploy-service",
+    "railway-redeploy-service",
     "Trigger a redeployment of a service using the latest deployment. environmentId defaults to the project's production environment.",
     {
       projectId: z.string().describe("The project ID"),
@@ -1388,9 +1388,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- create-service-from-github --
+  // -- railway-create-service-from-github --
   server.tool(
-    "create-service-from-github",
+    "railway-create-service-from-github",
     "Create a new service from a GitHub repository and trigger initial deployment. environmentId defaults to the project's production environment.",
     {
       projectId: z.string().describe("The project ID"),
@@ -1465,7 +1465,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
               `**${service.name}** (ID: ${service.id})\n` +
               `Repository: ${repo}\n` +
               `Error: ${deployError.message}\n\n` +
-              `Try using redeploy-service to manually trigger deployment.`
+              `Try using railway-redeploy-service to manually trigger deployment.`
           );
         }
 
@@ -1474,7 +1474,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             `**${service.name}** (ID: ${service.id})\n` +
             `Repository: ${repo} (branch: ${branch || "main"})\n` +
             `Environment: ${envId}\n\n` +
-            `Use list-deployments to check build progress.`
+            `Use railway-list-deployments to check build progress.`
         );
       } catch (error) {
         return toolResponse(`Failed to create service: ${error.message}`);
@@ -1482,9 +1482,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- delete-service --
+  // -- railway-delete-service --
   server.tool(
-    "delete-service",
+    "railway-delete-service",
     "Delete a service from a project",
     {
       serviceId: z.string().describe("The service ID to delete"),
@@ -1507,9 +1507,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- query-postgres --
+  // -- railway-query-postgres --
   server.tool(
-    "query-postgres",
+    "railway-query-postgres",
     "Execute a SQL query against a PostgreSQL database",
     {
       connectionString: z
@@ -1577,27 +1577,27 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- volume tools (create-volume, list-volumes, delete-volume) --
+  // -- volume tools (railway-create-volume, railway-list-volumes, railway-delete-volume) --
   registerVolumeTools(server, { gqlRequest, resolveEnvironmentId });
 
   // -- GitHub connection (device flow) — these are always available so the
   //    user can connect; the action tools below appear once connected. --
   // When GitHub isn't connected, octokit is a proxy that throws a friendly
   // error on use — so the GitHub tools can stay listed (stable tool list)
-  // and just tell the user to run connect-github.
+  // and just tell the user to run github-connect.
   const octokit = githubToken
     ? new Octokit({ auth: githubToken })
     : new Proxy(
         {},
         {
           get() {
-            throw new Error("GitHub isn't connected yet — run connect-github first.");
+            throw new Error("GitHub isn't connected yet — run github-connect first.");
           },
         }
       );
 
   server.tool(
-    "connect-github",
+    "github-connect",
     "Connect your GitHub account so the GitHub tools work. Returns an install link (to choose which repos the agent can touch) and a one-time code to authorize at github.com/login/device.",
     {},
     async () => {
@@ -1625,7 +1625,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     {},
     async () => {
       const t = await resolveGitHubToken();
-      if (!t) return toolResponse("GitHub is not connected. Run connect-github to connect.");
+      if (!t) return toolResponse("GitHub is not connected. Run github-connect to connect.");
       try {
         const me = await new Octokit({ auth: t }).users.getAuthenticated();
         return toolResponse(`GitHub connected as **${me.data.login}**. The GitHub tools are active.`);
@@ -1637,11 +1637,11 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- GitHub action tools (always listed; they error helpfully until connect-github) --
+  // -- GitHub action tools (always listed; they error helpfully until github-connect) --
   {
-  // -- check-connection --
+  // -- github-check-connection --
   server.tool(
-    "check-connection",
+    "github-check-connection",
     "Check GitHub API connectivity and show authenticated user",
     {},
     async () => {
@@ -1658,9 +1658,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- list-repos --
+  // -- github-list-repos --
   server.tool(
-    "list-repos",
+    "github-list-repos",
     "List repositories accessible to the authenticated user",
     {
       type: z
@@ -1701,9 +1701,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- get-repo --
+  // -- github-get-repo --
   server.tool(
-    "get-repo",
+    "github-get-repo",
     "Get details about a specific repository",
     {
       owner: z.string().describe("Repository owner (username or org)"),
@@ -1729,9 +1729,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- create-repo --
+  // -- github-create-repo --
   server.tool(
-    "create-repo",
+    "github-create-repo",
     "Create a new GitHub repository",
     {
       name: z.string().describe("Repository name"),
@@ -1783,9 +1783,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- list-branches --
+  // -- github-list-branches --
   server.tool(
-    "list-branches",
+    "github-list-branches",
     "List branches in a repository",
     {
       owner: z.string().describe("Repository owner"),
@@ -1814,9 +1814,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- create-branch --
+  // -- github-create-branch --
   server.tool(
-    "create-branch",
+    "github-create-branch",
     "Create a new branch from an existing ref",
     {
       owner: z.string().describe("Repository owner"),
@@ -1869,9 +1869,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- get-file --
+  // -- github-get-file --
   server.tool(
-    "get-file",
+    "github-get-file",
     "Get the contents of a file from a repository",
     {
       owner: z.string().describe("Repository owner"),
@@ -1910,9 +1910,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- create-or-update-file --
+  // -- github-create-or-update-file --
   server.tool(
-    "create-or-update-file",
+    "github-create-or-update-file",
     "Create or update a file in a repository",
     {
       owner: z.string().describe("Repository owner"),
@@ -1962,12 +1962,12 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- patch-file --
+  // -- github-patch-file --
   server.tool(
-    "patch-file",
+    "github-patch-file",
     "Edit a file by replacing an exact string, sending only the change instead of the whole file. " +
       "Fetches the current file server-side, replaces old_str with new_str (old_str must appear exactly once), " +
-      "and commits. Use this for edits to existing files; use create-or-update-file for new files or full rewrites.",
+      "and commits. Use this for edits to existing files; use github-create-or-update-file for new files or full rewrites.",
     {
       owner: z.string().describe("Repository owner"),
       repo: z.string().describe("Repository name"),
@@ -2004,7 +2004,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
         if (firstIdx === -1) {
           return toolResponse(
             `Failed to patch: old_str not found in '${filePath}'. ` +
-              `The file may have changed; re-fetch with get-file and retry.`
+              `The file may have changed; re-fetch with github-get-file and retry.`
           );
         }
         if (original.indexOf(old_str, firstIdx + 1) !== -1) {
@@ -2052,9 +2052,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- delete-file --
+  // -- github-delete-file --
   server.tool(
-    "delete-file",
+    "github-delete-file",
     "Delete a file from a repository",
     {
       owner: z.string().describe("Repository owner"),
@@ -2096,9 +2096,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- list-pull-requests --
+  // -- github-list-pull-requests --
   server.tool(
-    "list-pull-requests",
+    "github-list-pull-requests",
     "List pull requests in a repository",
     {
       owner: z.string().describe("Repository owner"),
@@ -2138,9 +2138,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- get-pull-request --
+  // -- github-get-pull-request --
   server.tool(
-    "get-pull-request",
+    "github-get-pull-request",
     "Get details about a specific pull request",
     {
       owner: z.string().describe("Repository owner"),
@@ -2171,9 +2171,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- create-pull-request --
+  // -- github-create-pull-request --
   server.tool(
-    "create-pull-request",
+    "github-create-pull-request",
     "Create a new pull request",
     {
       owner: z.string().describe("Repository owner"),
@@ -2208,9 +2208,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- search-code --
+  // -- github-search-code --
   server.tool(
-    "search-code",
+    "github-search-code",
     "Search for code across GitHub repositories",
     {
       query: z.string().describe("Search query (can include qualifiers like repo:, language:, path:)"),
@@ -2244,9 +2244,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- list-commits --
+  // -- github-list-commits --
   server.tool(
-    "list-commits",
+    "github-list-commits",
     "List commits in a repository",
     {
       owner: z.string().describe("Repository owner"),
@@ -2284,9 +2284,9 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
-  // -- get-diff --
+  // -- github-get-diff --
   server.tool(
-    "get-diff",
+    "github-get-diff",
     "Get the diff for a pull request or between commits",
     {
       owner: z.string().describe("Repository owner"),
@@ -2479,7 +2479,7 @@ async function resolveRailwayAccessToken(mcpToken) {
 }
 
 // ---------------------------------------------------------------------------
-// GitHub App device flow (connect-github)
+// GitHub App device flow (github-connect)
 // ---------------------------------------------------------------------------
 
 // Start a device-flow authorization; returns { user_code, verification_uri,
@@ -2631,13 +2631,13 @@ app.get("/", (_req, res) => {
 
   const ghPro = ghEnabled
     ? `<div class="note">✓ GitHub tools are <b>enabled</b>. Custom connectors require a paid Claude plan.</div>`
-    : `<div class="note"><b>GitHub is optional</b> (Railway tools work without it). Easiest: ask Claude to run <code>connect-github</code> — it walks you through installing the app + picking repos, no token to paste. Or set a <code>GITHUB_TOKEN</code> variable manually. Custom connectors require a paid Claude plan.</div>`;
+    : `<div class="note"><b>GitHub is optional</b> (Railway tools work without it). Easiest: ask Claude to run <code>github-connect</code> — it walks you through installing the app + picking repos, no token to paste. Or set a <code>GITHUB_TOKEN</code> variable manually. Custom connectors require a paid Claude plan.</div>`;
 
   const ghNew = ghEnabled
     ? `<li><b>GitHub is already connected</b> ✓ — you can also ask Claude to read and write your code (e.g. "create a repo and push a hello-world app").</li>`
     : `<li><b>Optional: connect GitHub</b> so Claude can store and write your code (create repos, commit files, open pull requests):
         <ol class="sub-ol">
-          <li><b>Easiest:</b> once you've added the connector and logged in, ask Claude to run <code>connect-github</code>. It gives you a link to install the app (pick which repos it can touch) and a code to authorize — no token to copy. New to GitHub? <a href="https://github.com/signup" target="_blank" rel="noopener">Sign up free</a> first.</li>
+          <li><b>Easiest:</b> once you've added the connector and logged in, ask Claude to run <code>github-connect</code>. It gives you a link to install the app (pick which repos it can touch) and a code to authorize — no token to copy. New to GitHub? <a href="https://github.com/signup" target="_blank" rel="noopener">Sign up free</a> first.</li>
           <li><b>Or manually:</b> <a href="${tokenLink}" target="_blank" rel="noopener">create a token</a> (<code>repo</code> pre-selected) and set it as a <code>GITHUB_TOKEN</code> variable on this service.</li>
         </ol>
         You can skip this for now and add it anytime.</li>`;
@@ -3087,7 +3087,7 @@ ensureRailwayClient().finally(() => {
           ? `connected as ${githubAuth.login || "?"}`
           : GITHUB_TOKEN
           ? "static GITHUB_TOKEN"
-          : "not connected (use connect-github)"
+          : "not connected (use github-connect)"
       }`
     );
     console.log(
