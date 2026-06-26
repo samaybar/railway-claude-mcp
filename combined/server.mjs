@@ -1504,9 +1504,29 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           );
         } catch (connectError) {
           const msg = connectError.message || "";
+          // Auto-clean the orphan shell: the service exists but has no working
+          // source, so leaving it just litters the project with empty services.
+          let cleaned = false;
+          try {
+            await gqlRequest(
+              gql`
+                mutation ServiceDelete($id: String!) {
+                  serviceDelete(id: $id)
+                }
+              `,
+              { id: service.id }
+            );
+            cleaned = true;
+          } catch {
+            // Cleanup is best-effort; if it fails we tell the user the shell remains.
+          }
+          const shellNote = cleaned
+            ? `I removed the empty service I'd just created, so nothing is left dangling in your project.`
+            : `An empty service shell (ID: ${service.id}) was left behind and couldn't be auto-removed — delete it with railway-delete-service.`;
+
           if (/does not have access|access to the repo|not have access/i.test(msg)) {
             return toolResponse(
-              `The service shell was created (ID: ${service.id}), but Railway couldn't connect the repo **${repo}**:\n\n` +
+              `Railway couldn't connect the repo **${repo}**:\n\n` +
                 `> ${msg}\n\n` +
                 `This is the separate-GitHub-App gap. The repo was created through your connector's GitHub App, but **Railway's own GitHub App** hasn't been granted access to it, and Railway can only deploy from repos its App can see (private repos in particular require an explicit grant).\n\n` +
                 `**Fastest durable fix (recommended when you build from Claude a lot):** give Railway's GitHub App access to *all* your repos, so every repo created here just works:\n` +
@@ -1515,12 +1535,12 @@ function createRailwayMcpServer(railwayToken, githubToken) {
                 `3. Under *Repository access*, choose **All repositories**, then Save.\n\n` +
                 `**Or grant just this repo:** same screen, choose *Only select repositories* and add **${repo}**.\n\n` +
                 `**Or make the repo public** (ask me and I'll flip it) — that skips the App-access requirement entirely.\n\n` +
-                `Once you've done one of those, tell me and I'll deploy into the existing project with railway-redeploy-service (the shell ${service.id} is already there, so no need to recreate it).`
+                `${shellNote}\n\n` +
+                `Once access is sorted, just ask me to deploy ${repo} again and I'll recreate the service cleanly.`
             );
           }
           return toolResponse(
-            `Service shell created (ID: ${service.id}) but connecting the repo failed:\n${msg}\n\n` +
-              `The shell exists in your project — delete it or retry connecting once the cause is resolved.`
+            `Connecting the repo **${repo}** failed:\n${msg}\n\n${shellNote}`
           );
         }
 
