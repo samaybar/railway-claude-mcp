@@ -1542,6 +1542,41 @@ function createRailwayMcpServer(railwayToken, githubToken) {
     }
   );
 
+  // -- update-this-connector (self-redeploy to the latest version) --
+  server.tool(
+    "update-this-connector",
+    "Redeploy THIS MCP connector from the latest published version (pulls the newest code from its source repo). Use when the user asks to update the connector. Settings and the GitHub connection persist across the update.",
+    {},
+    async () => {
+      const serviceId = process.env.RAILWAY_SERVICE_ID;
+      const environmentId = process.env.RAILWAY_ENVIRONMENT_ID;
+      if (!serviceId || !environmentId) {
+        return toolResponse(
+          "Can't self-identify this service (RAILWAY_SERVICE_ID / RAILWAY_ENVIRONMENT_ID aren't set). This tool only works on a Railway deployment."
+        );
+      }
+      try {
+        await gqlRequest(
+          gql`
+            mutation ($serviceId: String!, $environmentId: String!) {
+              serviceInstanceDeploy(
+                serviceId: $serviceId
+                environmentId: $environmentId
+                latestCommit: true
+              )
+            }
+          `,
+          { serviceId, environmentId }
+        );
+        return toolResponse(
+          "Updating this connector to the latest version — it'll redeploy in ~1-2 minutes. Your GitHub connection and settings persist. If the available tools change, reconnect the connector in Claude afterward."
+        );
+      } catch (error) {
+        return toolResponse(`Failed to update the connector: ${error.message}`);
+      }
+    }
+  );
+
   // -- volume tools (create-volume, list-volumes, delete-volume) --
   registerVolumeTools(server, { gqlRequest, resolveEnvironmentId });
 
