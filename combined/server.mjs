@@ -2342,9 +2342,16 @@ app.get("/health", (_req, res) => {
 // whether GitHub tools are on. No secrets, allowlist, or owner info here.
 app.get("/", (_req, res) => {
   const mcpUrl = `${PUBLIC_URL}/mcp`;
-  const gh = octokit
-    ? "GitHub tools are <b>enabled</b>."
-    : "Running <b>Railway-only</b> — set <code>GITHUB_TOKEN</code> to enable the GitHub tools.";
+  const ghSection = octokit
+    ? `<div class="note">✓ GitHub tools are <b>enabled</b>. Custom connectors require a paid Claude plan.</div>`
+    : `<div class="note">
+      <b>GitHub tools are optional</b> — the Railway tools work right now without them. To turn on GitHub (create repos, read/write code, open PRs):
+      <ol style="margin:.4rem 0 .3rem 1.1rem">
+        <li><a href="https://github.com/settings/tokens/new?scopes=repo&amp;description=Railway-GitHub-MCP" target="_blank" rel="noopener">Create a GitHub token</a> — the <code>repo</code> scope is pre-selected; generate &amp; copy it. New to GitHub? You'll be prompted to sign in or sign up first.</li>
+        <li>In this Railway service, open <b>Variables</b> and set <code>GITHUB_TOKEN</code> to that token.</li>
+      </ol>
+      Custom connectors require a paid Claude plan.
+    </div>`;
   res.type("html").send(`<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2387,7 +2394,7 @@ app.get("/", (_req, res) => {
       <li>Click <b>Connect</b> → <b>Log in with Railway</b></li>
     </ol>
 
-    <div class="note">${gh} Custom connectors require a paid Claude plan.</div>
+    ${ghSection}
   </div>
 </body></html>`);
 });
