@@ -2342,16 +2342,24 @@ app.get("/health", (_req, res) => {
 // whether GitHub tools are on. No secrets, allowlist, or owner info here.
 app.get("/", (_req, res) => {
   const mcpUrl = `${PUBLIC_URL}/mcp`;
-  const ghSection = octokit
+  const ghEnabled = !!octokit;
+  const tokenLink =
+    "https://github.com/settings/tokens/new?scopes=repo&description=Railway-GitHub-MCP";
+
+  const ghPro = ghEnabled
     ? `<div class="note">✓ GitHub tools are <b>enabled</b>. Custom connectors require a paid Claude plan.</div>`
-    : `<div class="note">
-      <b>GitHub tools are optional</b> — the Railway tools work right now without them. To turn on GitHub (create repos, read/write code, open PRs):
-      <ol style="margin:.4rem 0 .3rem 1.1rem">
-        <li><a href="https://github.com/settings/tokens/new?scopes=repo&amp;description=Railway-GitHub-MCP" target="_blank" rel="noopener">Create a GitHub token</a> — the <code>repo</code> scope is pre-selected; generate &amp; copy it. New to GitHub? You'll be prompted to sign in or sign up first.</li>
-        <li>In this Railway service, open <b>Variables</b> and set <code>GITHUB_TOKEN</code> to that token.</li>
-      </ol>
-      Custom connectors require a paid Claude plan.
-    </div>`;
+    : `<div class="note"><b>GitHub is optional</b> (Railway tools work without it). To enable: <a href="${tokenLink}" target="_blank" rel="noopener">create a token</a> (scope pre-selected), then set <code>GITHUB_TOKEN</code> in this service's <b>Variables</b>. Custom connectors require a paid Claude plan.</div>`;
+
+  const ghNew = ghEnabled
+    ? `<li><b>GitHub is already connected</b> ✓ — you can also ask Claude to read and write your code (e.g. "create a repo and push a hello-world app").</li>`
+    : `<li><b>Optional: connect GitHub</b> so Claude can store and write your code (create repos, commit files, open pull requests):
+        <ol class="sub-ol">
+          <li>No GitHub account? <a href="https://github.com/signup" target="_blank" rel="noopener">Sign up free</a> first.</li>
+          <li><a href="${tokenLink}" target="_blank" rel="noopener">Create a token</a> — the <code>repo</code> permission is pre-selected. Click <b>Generate token</b> and copy it.</li>
+          <li>In this Railway service, open <b>Variables</b>, add one named <code>GITHUB_TOKEN</code>, and paste the token. It redeploys and the GitHub tools switch on.</li>
+        </ol>
+        You can skip this for now and add it anytime.</li>`;
+
   res.type("html").send(`<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2361,41 +2369,87 @@ app.get("/", (_req, res) => {
   body { font-family: system-ui, -apple-system, sans-serif; min-height: 100vh; display: flex;
     align-items: center; justify-content: center; padding: 24px;
     background: linear-gradient(135deg, #8B6CFF, #5326CC); color: #1c1f26; }
-  .card { background: #fff; border-radius: 16px; padding: 2rem; max-width: 520px; width: 100%;
+  .card { background: #fff; border-radius: 16px; padding: 2rem; max-width: 560px; width: 100%;
     box-shadow: 0 8px 40px rgba(0,0,0,.18); }
   h1 { font-size: 1.4rem; margin-bottom: .25rem; }
-  .sub { color: #666; font-size: .95rem; margin-bottom: 1.5rem; }
+  .sub { color: #666; font-size: .95rem; margin-bottom: 1.25rem; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid #eee; margin-bottom: 1.25rem; }
+  .tab { background: none; color: #777; border: none; border-bottom: 2px solid transparent;
+    border-radius: 0; padding: .55rem .8rem; font-size: .9rem; font-weight: 600; cursor: pointer; }
+  .tab:hover { background: none; color: #1c1f26; }
+  .tab.active { color: #6A45F0; border-bottom-color: #6A45F0; }
   label { font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #6A45F0; }
-  .url { display: flex; gap: 8px; margin: .5rem 0 1.5rem; }
+  .url { display: flex; gap: 8px; margin: .5rem 0 1.25rem; }
   .url code { flex: 1; background: #f3f0fb; border: 1px solid #e0d8f5; border-radius: 8px;
-    padding: .7rem .8rem; font-family: ui-monospace, Menlo, monospace; font-size: .9rem;
+    padding: .7rem .8rem; font-family: ui-monospace, Menlo, monospace; font-size: .88rem;
     overflow-x: auto; white-space: nowrap; }
   button { background: #6A45F0; color: #fff; border: none; border-radius: 8px; padding: 0 1rem;
-    font-size: .85rem; font-weight: 600; cursor: pointer; }
+    font-size: .85rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
   button:hover { background: #5a37d8; }
-  ol { margin: 0 0 1.25rem 1.1rem; font-size: .92rem; line-height: 1.7; }
+  ol, ul { margin: 0 0 1rem 1.1rem; font-size: .92rem; line-height: 1.7; }
+  .sub-ol { margin: .4rem 0 .5rem 1.1rem; }
+  .what { background: #f9f8fd; border: 1px solid #eee; border-radius: 10px; padding: .9rem 1rem;
+    margin-bottom: 1.25rem; font-size: .92rem; line-height: 1.55; }
+  .what p { margin-bottom: .5rem; }
+  .what ul { margin: .3rem 0 .5rem 1.2rem; }
   .note { font-size: .85rem; color: #555; background: #f6f4fb; border-radius: 8px; padding: .7rem .8rem; }
   a { color: #6A45F0; }
+  [hidden] { display: none; }
 </style></head>
 <body>
   <div class="card">
     <h1>Railway + GitHub MCP</h1>
-    <div class="sub">One connector for Claude — manage your Railway projects and GitHub repos from chat.</div>
+    <div class="sub">A Claude connector that builds and ships apps for you — it manages Railway (hosting) and, optionally, GitHub (your code).</div>
 
-    <label>Add this connector to Claude</label>
-    <div class="url">
-      <code id="u">${mcpUrl}</code>
-      <button onclick="navigator.clipboard.writeText('${mcpUrl}');this.textContent='Copied'">Copy</button>
+    <div class="tabs">
+      <button class="tab active" onclick="showTab('pro', this)">I know what I'm doing</button>
+      <button class="tab" onclick="showTab('new', this)">I'm new to this</button>
     </div>
 
-    <ol>
-      <li>In Claude: <b>Settings → Connectors → Add custom connector</b></li>
-      <li>Paste the URL above and save</li>
-      <li>Click <b>Connect</b> → <b>Log in with Railway</b></li>
-    </ol>
+    <div id="pro" class="pane">
+      <label>Add this connector to Claude</label>
+      <div class="url"><code>${mcpUrl}</code><button onclick="copyUrl(this)">Copy</button></div>
+      <ol>
+        <li>Claude → <b>Settings → Connectors → Add custom connector</b></li>
+        <li>Paste the URL, save</li>
+        <li><b>Connect</b> → <b>Log in with Railway</b></li>
+      </ol>
+      ${ghPro}
+    </div>
 
-    ${ghSection}
+    <div id="new" class="pane" hidden>
+      <div class="what">
+        <p><b>What this is.</b> A "connector" gives Claude (the AI you chat with) the ability to act in:</p>
+        <ul>
+          <li><b>Railway</b> — where your app actually runs (servers, database, deploys).</li>
+          <li><b>GitHub</b> — where your code is stored. Optional; add it whenever.</li>
+        </ul>
+        <p>You describe what you want in plain English, and Claude creates the project, writes the code, and deploys it — acting as you, securely.</p>
+      </div>
+
+      <label>Get set up</label>
+      <ol>
+        <li>You'll need a <b>paid Claude plan</b> (Pro or above) — custom connectors aren't on the free tier.</li>
+        <li>Copy this connector address:
+          <div class="url"><code>${mcpUrl}</code><button onclick="copyUrl(this)">Copy</button></div>
+        </li>
+        <li>In Claude, go to <b>Settings → Connectors → Add custom connector</b>, paste the address, and save.</li>
+        <li>Click <b>Connect</b>, then <b>Log in with Railway</b> and approve. That's it — try asking Claude <i>"list my Railway projects."</i></li>
+        ${ghNew}
+      </ol>
+    </div>
   </div>
+  <script>
+    function showTab(id, btn) {
+      document.querySelectorAll('.pane').forEach(function (p) { p.hidden = p.id !== id; });
+      document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
+      btn.classList.add('active');
+    }
+    function copyUrl(btn) {
+      navigator.clipboard.writeText(btn.previousElementSibling.textContent);
+      btn.textContent = 'Copied';
+    }
+  </script>
 </body></html>`);
 });
 
