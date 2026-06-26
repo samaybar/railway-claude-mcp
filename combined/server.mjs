@@ -766,6 +766,16 @@ function createRailwayMcpServer(railwayToken, githubToken) {
                       name
                       icon
                       updatedAt
+                      serviceInstances {
+                        edges {
+                          node {
+                            source {
+                              repo
+                              image
+                            }
+                          }
+                        }
+                      }
                     }
                   }
                 }
@@ -780,8 +790,21 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           return toolResponse("No services found in this project.");
         }
 
+        const sourceOf = (s) => {
+          const src = s.serviceInstances?.edges?.[0]?.node?.source;
+          if (!src) return null;
+          if (src.repo) return `repo: ${src.repo}`;
+          if (src.image) return `image: ${src.image}`;
+          return null;
+        };
+
         const formatted = services
-          .map((s) => `- **${s.name}** (ID: ${s.id})`)
+          .map((s) => {
+            const src = sourceOf(s);
+            return `- **${s.name}** (ID: ${s.id})${
+              src ? `\n    ${src}` : `\n    no source connected yet`
+            }`;
+          })
           .join("\n");
 
         return toolResponse(
@@ -1364,7 +1387,36 @@ function createRailwayMcpServer(railwayToken, githubToken) {
 
         const latestDeployment = deployData.deployments?.edges?.[0]?.node;
         if (!latestDeployment) {
-          return toolResponse("No previous deployment found to redeploy.");
+          // No prior deployment — common when a service was created and connected
+          // to a repo but the first build never ran. Trigger a fresh deploy from
+          // the connected source's latest commit instead of giving up.
+          try {
+            await gqlRequest(
+              gql`
+                mutation ($serviceId: String!, $environmentId: String!) {
+                  serviceInstanceDeploy(
+                    serviceId: $serviceId
+                    environmentId: $environmentId
+                    latestCommit: true
+                  )
+                }
+              `,
+              { serviceId, environmentId: envId }
+            );
+            return toolResponse(
+              `No prior deployment existed, so I kicked off a fresh deploy from the connected source's latest commit. ` +
+                `Use railway-list-deployments to watch the build.\n\n` +
+                `If the build can't fetch the repo, either no repo is connected to this service yet ` +
+                `(recreate it with railway-create-service-from-github), or Railway's GitHub App lacks access to a private repo ` +
+                `(grant it at https://github.com/settings/installations, or make the repo public).`
+            );
+          } catch (freshErr) {
+            return toolResponse(
+              `No prior deployment to redeploy, and a fresh deploy couldn't start:\n${freshErr.message}\n\n` +
+                `Most likely this service has no GitHub repo connected yet — recreate it with railway-create-service-from-github ` +
+                `(after confirming Railway's GitHub App can access the repo for private repos).`
+            );
+          }
         }
 
         await gqlRequest(
