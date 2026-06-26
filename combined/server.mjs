@@ -1433,22 +1433,44 @@ function createRailwayMcpServer(railwayToken, githubToken) {
 
         const service = createData.serviceCreate;
 
-        await gqlRequest(
-          gql`
-            mutation ServiceConnect($id: String!, $input: ServiceConnectInput!) {
-              serviceConnect(id: $id, input: $input) {
-                id
+        try {
+          await gqlRequest(
+            gql`
+              mutation ServiceConnect($id: String!, $input: ServiceConnectInput!) {
+                serviceConnect(id: $id, input: $input) {
+                  id
+                }
               }
+            `,
+            {
+              id: service.id,
+              input: {
+                repo,
+                branch: branch || "main",
+              },
             }
-          `,
-          {
-            id: service.id,
-            input: {
-              repo,
-              branch: branch || "main",
-            },
+          );
+        } catch (connectError) {
+          const msg = connectError.message || "";
+          if (/does not have access|access to the repo|not have access/i.test(msg)) {
+            return toolResponse(
+              `The service shell was created (ID: ${service.id}), but Railway couldn't connect the repo **${repo}**:\n\n` +
+                `> ${msg}\n\n` +
+                `This is the separate-GitHub-App gap. The repo was created through your connector's GitHub App, but **Railway's own GitHub App** hasn't been granted access to it, and Railway can only deploy from repos its App can see (private repos in particular require an explicit grant).\n\n` +
+                `**Fastest durable fix (recommended when you build from Claude a lot):** give Railway's GitHub App access to *all* your repos, so every repo created here just works:\n` +
+                `1. Open https://github.com/settings/installations\n` +
+                `2. Click **Railway → Configure**\n` +
+                `3. Under *Repository access*, choose **All repositories**, then Save.\n\n` +
+                `**Or grant just this repo:** same screen, choose *Only select repositories* and add **${repo}**.\n\n` +
+                `**Or make the repo public** (ask me and I'll flip it) — that skips the App-access requirement entirely.\n\n` +
+                `Once you've done one of those, tell me and I'll deploy into the existing project with railway-redeploy-service (the shell ${service.id} is already there, so no need to recreate it).`
+            );
           }
-        );
+          return toolResponse(
+            `Service shell created (ID: ${service.id}) but connecting the repo failed:\n${msg}\n\n` +
+              `The shell exists in your project — delete it or retry connecting once the cause is resolved.`
+          );
+        }
 
         try {
           await gqlRequest(
@@ -1732,11 +1754,14 @@ function createRailwayMcpServer(railwayToken, githubToken) {
   // -- github-create-repo --
   server.tool(
     "github-create-repo",
-    "Create a new GitHub repository",
+    "Create a new GitHub repository. Defaults to PRIVATE (safer — keeps code and any accidentally-committed secrets out of public view, which a new user may not realize). If the user hasn't specified, create it private and mention they can make it public if they prefer.",
     {
       name: z.string().describe("Repository name"),
       description: z.string().optional().describe("Repository description"),
-      private: z.boolean().optional().describe("Make repository private (default: true)"),
+      private: z
+        .boolean()
+        .optional()
+        .describe("Make repository private. Default true. Only set false if the user explicitly wants a public repo."),
       owner: z.string().optional().describe("Org to create repo in (defaults to authenticated user)"),
     },
     async ({ name, description, private: isPrivate = true, owner }) => {
@@ -1770,12 +1795,20 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           }));
         }
 
+        const privacyNote = data.private
+          ? `\n\nIt's **private** by default — that keeps your code and any secrets out of public view. ` +
+            `One heads-up: to deploy a private repo on Railway, Railway's GitHub App needs access to it ` +
+            `(set it to *All repositories* once at https://github.com/settings/installations, or grant this repo when prompted). ` +
+            `Prefer it public instead? Just ask and I'll switch it.`
+          : `\n\nIt's **public**.`;
+
         return toolResponse(
           `Repository created!\n\n` +
             `**${data.full_name}**${data.private ? " (private)" : " (public)"}\n` +
             `${data.description ? `Description: ${data.description}\n` : ""}` +
             `URL: ${data.html_url}\n` +
-            `Clone: ${data.clone_url}`
+            `Clone: ${data.clone_url}` +
+            privacyNote
         );
       } catch (error) {
         return toolResponse(`Failed to create repo: ${error.message}`);
@@ -2676,6 +2709,13 @@ app.get("/", (_req, res) => {
   .what ul { margin: .3rem 0 .5rem 1.2rem; }
   .note { font-size: .85rem; color: #555; background: #f6f4fb; border-radius: 8px; padding: .7rem .8rem; }
   a { color: #6A45F0; }
+  .try { margin-top: 1.5rem; border-top: 1px solid #eee; padding-top: 1.25rem; }
+  .try label { display: block; margin-bottom: .5rem; }
+  .try .prompt { display: flex; gap: 8px; align-items: stretch; }
+  .try .prompt p { flex: 1; background: #f3f0fb; border: 1px solid #e0d8f5; border-radius: 8px;
+    padding: .7rem .8rem; font-size: .9rem; line-height: 1.5; color: #2a2440; }
+  .try .prompt button { align-self: stretch; }
+  .try .hint { font-size: .8rem; color: #777; margin-top: .5rem; }
   [hidden] { display: none; }
 </style></head>
 <body>
@@ -2684,11 +2724,11 @@ app.get("/", (_req, res) => {
     <div class="sub">A Claude connector that builds and ships apps for you — it manages Railway (hosting) and, optionally, GitHub (your code).</div>
 
     <div class="tabs">
-      <button class="tab active" onclick="showTab('pro', this)">I know what I'm doing</button>
-      <button class="tab" onclick="showTab('new', this)">I'm new to this</button>
+      <button class="tab active" onclick="showTab('new', this)">I'm new to this</button>
+      <button class="tab" onclick="showTab('pro', this)">I know what I'm doing</button>
     </div>
 
-    <div id="pro" class="pane">
+    <div id="pro" class="pane" hidden>
       <label>Add this connector to Claude</label>
       <div class="url"><code>${mcpUrl}</code><button onclick="copyUrl(this)">Copy</button></div>
       <ol>
@@ -2699,7 +2739,7 @@ app.get("/", (_req, res) => {
       ${ghPro}
     </div>
 
-    <div id="new" class="pane" hidden>
+    <div id="new" class="pane">
       <div class="what">
         <p><b>What this is.</b> A "connector" gives Claude (the AI you chat with) the ability to act in:</p>
         <ul>
@@ -2720,6 +2760,15 @@ app.get("/", (_req, res) => {
         ${ghNew}
       </ol>
     </div>
+
+    <div class="try">
+      <label>✨ Try this first</label>
+      <div class="prompt">
+        <p>Build me a website that explains how easy it is to start coding in Claude with Railway. Include an animated chart, and a link to the Railway template so others can deploy their own. Then deploy it to Railway and send me the live URL.</p>
+        <button onclick="copyText(this)">Copy</button>
+      </div>
+      <div class="hint">Paste this to Claude once the connector is connected. It builds a real site and ships it live, all from one message.</div>
+    </div>
   </div>
   <script>
     function showTab(id, btn) {
@@ -2729,6 +2778,10 @@ app.get("/", (_req, res) => {
     }
     function copyUrl(btn) {
       navigator.clipboard.writeText(btn.previousElementSibling.textContent);
+      btn.textContent = 'Copied';
+    }
+    function copyText(btn) {
+      navigator.clipboard.writeText(btn.previousElementSibling.textContent.trim());
       btn.textContent = 'Copied';
     }
   </script>
