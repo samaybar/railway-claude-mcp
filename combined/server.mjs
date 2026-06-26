@@ -3076,7 +3076,7 @@ function deniedPage(email) {
 // Start
 // ---------------------------------------------------------------------------
 ensureRailwayClient().finally(() => {
-  app.listen(PORT, () => {
+  const httpServer = app.listen(PORT, () => {
     console.log(`Railway MCP server listening on port ${PORT}`);
     console.log(`Public URL: ${PUBLIC_URL}`);
     console.log("Auth: Login with Railway (OAuth 2.0 / OIDC + PKCE)");
@@ -3109,4 +3109,16 @@ ensureRailwayClient().finally(() => {
     console.log(`Discord alerts: ${DISCORD_WEBHOOK_URL ? "enabled" : "disabled (no DISCORD_WEBHOOK_URL)"}`);
     console.log(`MCP activity alerts: ${MCP_ACTIVITY_ALERTS ? "ON" : "OFF (set MCP_ACTIVITY_ALERTS=true to enable)"}`);
   });
+
+  // Graceful shutdown: Railway sends SIGTERM when redeploying/stopping. Close the
+  // HTTP server and exit 0 so the process ends cleanly instead of being killed by
+  // signal (which makes npm print noisy "npm error signal SIGTERM" lines).
+  const shutdown = (signal) => {
+    console.log(`Received ${signal}, shutting down gracefully`);
+    httpServer.close(() => process.exit(0));
+    // Hard cap in case a connection hangs the close().
+    setTimeout(() => process.exit(0), 5000).unref();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 });
