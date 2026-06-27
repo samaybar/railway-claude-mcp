@@ -894,6 +894,7 @@ function createGitHubMcpServer() {
       repo: z.string().describe("Repository name"),
       pull_number: z.number().describe("Pull request number"),
     },
+    { title: "Get pull request", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo, pull_number }) => {
       try {
         const { data: pr } = await octokit.pulls.get({
