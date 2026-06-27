@@ -1520,6 +1520,7 @@ function createRailwayMcpServer(railwayToken) {
     {
       serviceId: z.string().describe("The service ID to delete"),
     },
+    { title: "Delete service", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     async ({ serviceId }) => {
       try {
         await gqlRequest(
