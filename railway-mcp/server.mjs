@@ -242,9 +242,8 @@ const DESTRUCTIVE_TOOLS = new Set([
 ]);
 
 // Tools that get an extra-attention red color rather than orange.
-// list-variables is critical because anyone calling it with reveal=true can
-// dump every secret on the service in one call (API keys, DB connection
-// strings, etc). Values are masked by default.
+// list-variables is included because the set of configured variable names is
+// sensitive metadata, even though values are always masked in the output.
 const CRITICAL_TOOLS = new Set([
   "delete-service",
   "delete-volume",
