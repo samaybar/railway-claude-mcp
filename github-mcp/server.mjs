@@ -665,6 +665,7 @@ function createGitHubMcpServer() {
       message: z.string().describe("Commit message"),
       branch: z.string().optional().describe("Branch to commit to (default: default branch)"),
     },
+    { title: "Create or update file", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     async ({ owner, repo, path: filePath, content, message, branch }) => {
       try {
         // Check if file exists to get its SHA
