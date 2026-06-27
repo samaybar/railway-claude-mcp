@@ -1537,34 +1537,93 @@ function createRailwayMcpServer(railwayToken) {
   // -- query-postgres --
   server.tool(
     "query-postgres",
-    "Execute a SQL query against a PostgreSQL database",
+    "Execute a SQL query against a PostgreSQL database. Preferred: pass projectId + serviceId (of the Postgres service) and the server resolves the connection string itself — the DSN never enters the chat. Alternatively pass a raw connectionString as a fallback for databases not hosted on Railway (note: a raw connection string you pass here will appear in the transcript). environmentId defaults to the project's production environment.",
     {
+      projectId: z
+        .string()
+        .optional()
+        .describe("Project ID of the Railway Postgres service (preferred over connectionString)"),
+      environmentId: z
+        .string()
+        .optional()
+        .describe(
+          "The environment ID (defaults to the project's production environment). Only used with projectId/serviceId."
+        ),
+      serviceId: z
+        .string()
+        .optional()
+        .describe("Service ID of the Railway Postgres service (preferred over connectionString)"),
       connectionString: z
         .string()
+        .optional()
         .describe(
-          "PostgreSQL connection string (e.g., postgresql://user:pass@host:port/db)"
+          "Fallback: a raw PostgreSQL connection string (e.g., postgresql://user:pass@host:port/db). Use only for non-Railway databases; this value appears in the transcript. Prefer projectId + serviceId."
         ),
       sql: z.string().describe("SQL query to execute"),
     },
     { title: "Query Postgres", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    async ({ connectionString, sql }) => {
-      const client = new pg.Client({ connectionString });
+    async ({ projectId, environmentId, serviceId, connectionString, sql }) => {
       try {
-        await client.connect();
-        const result = await client.query(sql);
-        await client.end();
-
-        return toolResponse(
-          `Query executed successfully.\n\n` +
-            `Rows returned: ${result.rowCount}\n\n` +
-            `Results:\n\`\`\`json\n${JSON.stringify(result.rows, null, 2)}\n\`\`\``
-        );
-      } catch (error) {
-        try {
-          await client.end();
-        } catch {
-          // Ignore cleanup errors
+        // Resolve the connection string: prefer a server-side lookup from the
+        // Postgres service's own variables so the DSN never transits the model.
+        let dsn = connectionString;
+        if (!dsn) {
+          if (!projectId || !serviceId) {
+            return toolResponse(
+              "Provide either projectId + serviceId (preferred — resolves the DSN server-side) " +
+                "or a raw connectionString (fallback for non-Railway databases)."
+            );
+          }
+          const envId = await resolveEnvironmentId(projectId, environmentId);
+          const data = await gqlRequest(
+            gql`
+              query ($projectId: String!, $environmentId: String!, $serviceId: String!) {
+                variables(
+                  projectId: $projectId
+                  environmentId: $environmentId
+                  serviceId: $serviceId
+                )
+              }
+            `,
+            { projectId, environmentId: envId, serviceId }
+          );
+          const vars = data.variables || {};
+          // Railway Postgres exposes DATABASE_URL; prefer the public proxy URL
+          // when present since this server connects from outside the project.
+          dsn =
+            vars.DATABASE_PUBLIC_URL ||
+            vars.DATABASE_URL ||
+            vars.POSTGRES_URL ||
+            null;
+          if (!dsn) {
+            return toolResponse(
+              "Could not find a connection string on that service " +
+                "(looked for DATABASE_PUBLIC_URL, DATABASE_URL, POSTGRES_URL). " +
+                "It may be sealed, or this isn't a Postgres service. Pass connectionString explicitly if needed."
+            );
+          }
         }
+
+        const client = new pg.Client({ connectionString: dsn });
+        try {
+          await client.connect();
+          const result = await client.query(sql);
+          await client.end();
+
+          return toolResponse(
+            `Query executed successfully.\n\n` +
+              `Rows returned: ${result.rowCount}\n\n` +
+              `Results:\n\`\`\`json\n${JSON.stringify(result.rows, null, 2)}\n\`\`\``
+          );
+        } catch (error) {
+          try {
+            await client.end();
+          } catch {
+            // Ignore cleanup errors
+          }
+          return toolResponse(`Query failed: ${error.message}`);
+        }
+      } catch (error) {
         return toolResponse(`Query failed: ${error.message}`);
       }
     }
