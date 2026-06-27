@@ -1198,6 +1198,7 @@ function createRailwayMcpServer(railwayToken) {
           "Environment ID to deploy into (defaults to project's production environment when projectId is provided)"
         ),
     },
+    { title: "Deploy template", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ searchQuery, templateId, projectId, environmentId }) => {
       try {
         if (!templateId) {
