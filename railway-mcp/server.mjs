@@ -847,6 +847,7 @@ function createRailwayMcpServer(railwayToken) {
       serviceId: z.string().describe("The service ID"),
       limit: z.coerce.number().int().optional().describe("Number of log lines (default 100)"),
     },
+    { title: "Get logs", readOnlyHint: true, openWorldHint: true },
     async ({ projectId, environmentId, serviceId, limit }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
