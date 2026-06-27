@@ -724,7 +724,7 @@ function createRailwayMcpServer(railwayToken) {
   // -- list-variables --
   server.tool(
     "list-variables",
-    "List environment variables for a service. Values are MASKED by default so secrets don't leak into the conversation; only the variable names and value lengths are shown. Pass reveal=true to return raw values (use sparingly, and never for a service you don't own). environmentId defaults to the project's production environment.",
+    "List environment variables for a service. Values are always MASKED — only variable names and value lengths are shown, never the secret values themselves. To view or edit real values, use the Railway variables-tab link included in the response. environmentId defaults to the project's production environment.",
     {
       projectId: z.string().describe("The project ID"),
       environmentId: z
@@ -734,15 +734,9 @@ function createRailwayMcpServer(railwayToken) {
           "The environment ID (defaults to the project's production environment)"
         ),
       serviceId: z.string().describe("The service ID"),
-      reveal: z
-        .boolean()
-        .optional()
-        .describe(
-          "Return raw, unmasked values. WARNING: this prints secret values (API keys, DB URLs) into the chat transcript. Defaults to false."
-        ),
     },
-    { title: "List variables", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    async ({ projectId, environmentId, serviceId, reveal }) => {
+    { title: "List variables", readOnlyHint: true, openWorldHint: true },
+    async ({ projectId, environmentId, serviceId }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
         const data = await gqlRequest(
@@ -761,23 +755,24 @@ function createRailwayMcpServer(railwayToken) {
         const vars = data.variables || {};
         const entries = Object.entries(vars);
 
+        // Deep link to the service's variables tab, where real values can be
+        // viewed/edited in an authenticated context (never in the transcript).
+        const dashboardUrl = `https://railway.com/project/${projectId}/service/${serviceId}/variables`;
+
         if (entries.length === 0) {
-          return toolResponse("No variables found.");
+          return toolResponse(
+            `No variables returned for this service.\n\n` +
+              `Note: sealed variables don't appear here. View or edit values in the Railway dashboard:\n${dashboardUrl}`
+          );
         }
 
         const formatted = entries
-          .map(
-            ([key, value]) =>
-              `- **${key}** = \`${reveal ? value : maskValue(value)}\``
-          )
+          .map(([key, value]) => `- **${key}** = \`${maskValue(value)}\``)
           .join("\n");
 
-        const note = reveal
-          ? ""
-          : "\n\n_Values are masked. Call again with `reveal: true` to see raw values (this exposes secrets in the chat)._";
-
         return toolResponse(
-          `Found ${entries.length} variable(s):\n\n${formatted}${note}`
+          `Found ${entries.length} variable(s) (values masked):\n\n${formatted}\n\n` +
+            `_Values are masked and never shown here. To view or edit real values, open the Railway variables tab:_\n${dashboardUrl}`
         );
       } catch (error) {
         return toolResponse(`Failed to list variables: ${error.message}`);
