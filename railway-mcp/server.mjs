@@ -578,6 +578,7 @@ function createRailwayMcpServer(railwayToken) {
           "Workspace id to create the project in (from list-workspaces)."
         ),
     },
+    { title: "Create project", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ name, workspaceId }) => {
       try {
         const data = await gqlRequest(
