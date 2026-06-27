@@ -1325,6 +1325,7 @@ function createRailwayMcpServer(railwayToken) {
     "check-railway-status",
     "Check Railway platform status and API connectivity",
     {},
+    { title: "Check Railway status", readOnlyHint: true, openWorldHint: true },
     async () => {
       try {
         const data = await gqlRequest(gql`
