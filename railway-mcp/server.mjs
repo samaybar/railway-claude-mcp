@@ -680,6 +680,7 @@ function createRailwayMcpServer(railwayToken) {
     "list-services",
     "List all services in a Railway project",
     { projectId: z.string().describe("The project ID") },
+    { title: "List services", readOnlyHint: true, openWorldHint: true },
     async ({ projectId }) => {
       try {
         const data = await gqlRequest(
