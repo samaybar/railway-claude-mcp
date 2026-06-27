@@ -471,6 +471,7 @@ function createRailwayMcpServer(railwayToken) {
     "list-workspaces",
     "List the Railway workspaces this connector can access (the ones you granted at login). Use a workspace id with list-projects or create-project.",
     {},
+    { title: "List workspaces", readOnlyHint: true, openWorldHint: true },
     async () => {
       try {
         const d = await gqlRequest(gql`
