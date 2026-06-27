@@ -1011,6 +1011,7 @@ function createRailwayMcpServer(railwayToken) {
           "Port your app listens on. Optional — Railway auto-detects from the running service if omitted."
         ),
     },
+    { title: "Generate domain", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ projectId, environmentId, serviceId, targetPort }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
