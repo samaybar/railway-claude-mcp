@@ -741,6 +741,7 @@ function createRailwayMcpServer(railwayToken) {
           "Return raw, unmasked values. WARNING: this prints secret values (API keys, DB URLs) into the chat transcript. Defaults to false."
         ),
     },
+    { title: "List variables", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     async ({ projectId, environmentId, serviceId, reveal }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
