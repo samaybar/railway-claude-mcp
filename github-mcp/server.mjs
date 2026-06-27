@@ -447,6 +447,7 @@ function createGitHubMcpServer() {
       owner: z.string().describe("Repository owner (username or org)"),
       repo: z.string().describe("Repository name"),
     },
+    { title: "Get repository", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo }) => {
       try {
         const { data: r } = await octokit.repos.get({ owner, repo });
