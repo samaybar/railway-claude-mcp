@@ -380,6 +380,7 @@ function createGitHubMcpServer() {
     "check-connection",
     "Check GitHub API connectivity and show authenticated user",
     {},
+    { title: "Check connection", readOnlyHint: true, openWorldHint: true },
     async () => {
       try {
         const { data: user } = await octokit.users.getAuthenticated();
@@ -409,6 +410,7 @@ function createGitHubMcpServer() {
         .describe("Sort field (default: updated)"),
       limit: z.number().optional().describe("Max repos to return (default: 30)"),
     },
+    { title: "List repositories", readOnlyHint: true, openWorldHint: true },
     async ({ type, sort, limit }) => {
       try {
         const { data: repos } = await octokit.repos.listForAuthenticatedUser({
@@ -445,6 +447,7 @@ function createGitHubMcpServer() {
       owner: z.string().describe("Repository owner (username or org)"),
       repo: z.string().describe("Repository name"),
     },
+    { title: "Get repository", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo }) => {
       try {
         const { data: r } = await octokit.repos.get({ owner, repo });
@@ -475,6 +478,7 @@ function createGitHubMcpServer() {
       private: z.boolean().optional().describe("Make repository private (default: true)"),
       owner: z.string().optional().describe("Org to create repo in (defaults to authenticated user)"),
     },
+    { title: "Create repository", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ name, description, private: isPrivate = true, owner }) => {
       try {
         let data;
@@ -527,6 +531,7 @@ function createGitHubMcpServer() {
       owner: z.string().describe("Repository owner"),
       repo: z.string().describe("Repository name"),
     },
+    { title: "List branches", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo }) => {
       try {
         const { data: branches } = await octokit.repos.listBranches({
@@ -563,6 +568,7 @@ function createGitHubMcpServer() {
         .optional()
         .describe("Source branch or SHA (default: default branch)"),
     },
+    { title: "Create branch", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ owner, repo, branch, from }) => {
       try {
         // Get the SHA to branch from
@@ -615,6 +621,7 @@ function createGitHubMcpServer() {
       path: z.string().describe("Path to the file"),
       ref: z.string().optional().describe("Branch, tag, or SHA (default: default branch)"),
     },
+    { title: "Get file", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo, path: filePath, ref }) => {
       try {
         const { data } = await octokit.repos.getContent({
@@ -658,6 +665,7 @@ function createGitHubMcpServer() {
       message: z.string().describe("Commit message"),
       branch: z.string().optional().describe("Branch to commit to (default: default branch)"),
     },
+    { title: "Create or update file", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     async ({ owner, repo, path: filePath, content, message, branch }) => {
       try {
         // Check if file exists to get its SHA
@@ -713,6 +721,7 @@ function createGitHubMcpServer() {
       message: z.string().describe("Commit message"),
       branch: z.string().optional().describe("Branch to commit to (default: default branch)"),
     },
+    { title: "Patch file", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     async ({ owner, repo, path: filePath, old_str, new_str, message, branch }) => {
       try {
         // Fetch current file content + sha (server-side, with the server's token).
@@ -799,6 +808,7 @@ function createGitHubMcpServer() {
       message: z.string().describe("Commit message"),
       branch: z.string().optional().describe("Branch to commit to"),
     },
+    { title: "Delete file", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     async ({ owner, repo, path: filePath, message, branch }) => {
       try {
         // Get file SHA
@@ -845,6 +855,7 @@ function createGitHubMcpServer() {
         .describe("Filter by state (default: open)"),
       limit: z.number().optional().describe("Max PRs to return (default: 30)"),
     },
+    { title: "List pull requests", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo, state, limit }) => {
       try {
         const { data: prs } = await octokit.pulls.list({
@@ -883,6 +894,7 @@ function createGitHubMcpServer() {
       repo: z.string().describe("Repository name"),
       pull_number: z.number().describe("Pull request number"),
     },
+    { title: "Get pull request", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo, pull_number }) => {
       try {
         const { data: pr } = await octokit.pulls.get({
@@ -920,6 +932,7 @@ function createGitHubMcpServer() {
       body: z.string().optional().describe("PR description"),
       draft: z.boolean().optional().describe("Create as draft PR"),
     },
+    { title: "Create pull request", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ owner, repo, title, head, base, body, draft }) => {
       try {
         const { data: pr } = await octokit.pulls.create({
@@ -952,6 +965,7 @@ function createGitHubMcpServer() {
       query: z.string().describe("Search query (can include qualifiers like repo:, language:, path:)"),
       limit: z.number().optional().describe("Max results (default: 30)"),
     },
+    { title: "Search code", readOnlyHint: true, openWorldHint: true },
     async ({ query, limit }) => {
       try {
         const { data } = await octokit.search.code({
@@ -991,6 +1005,7 @@ function createGitHubMcpServer() {
       path: z.string().optional().describe("Only commits affecting this path"),
       limit: z.number().optional().describe("Max commits to return (default: 30)"),
     },
+    { title: "List commits", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo, sha, path: filePath, limit }) => {
       try {
         const { data: commits } = await octokit.repos.listCommits({
@@ -1031,6 +1046,7 @@ function createGitHubMcpServer() {
       base: z.string().optional().describe("Base commit SHA (if not using PR)"),
       head: z.string().optional().describe("Head commit SHA (if not using PR)"),
     },
+    { title: "Get diff", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo, pull_number, base, head }) => {
       try {
         if (pull_number) {
