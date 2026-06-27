@@ -380,6 +380,7 @@ function createGitHubMcpServer() {
     "check-connection",
     "Check GitHub API connectivity and show authenticated user",
     {},
+    { title: "Check connection", readOnlyHint: true, openWorldHint: true },
     async () => {
       try {
         const { data: user } = await octokit.users.getAuthenticated();
