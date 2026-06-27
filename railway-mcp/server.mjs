@@ -934,6 +934,7 @@ function createRailwayMcpServer(railwayToken) {
         .optional()
         .describe("Number of deployments to show (default 10)"),
     },
+    { title: "List deployments", readOnlyHint: true, openWorldHint: true },
     async ({ projectId, environmentId, serviceId, limit }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
