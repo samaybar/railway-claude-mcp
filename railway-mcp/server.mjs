@@ -1439,6 +1439,7 @@ function createRailwayMcpServer(railwayToken) {
         .optional()
         .describe("Branch to deploy (default: main)"),
     },
+    { title: "Create service from GitHub", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ projectId, environmentId, repo, name, branch }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
