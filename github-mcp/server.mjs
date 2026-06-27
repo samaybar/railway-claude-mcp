@@ -965,6 +965,7 @@ function createGitHubMcpServer() {
       query: z.string().describe("Search query (can include qualifiers like repo:, language:, path:)"),
       limit: z.number().optional().describe("Max results (default: 30)"),
     },
+    { title: "Search code", readOnlyHint: true, openWorldHint: true },
     async ({ query, limit }) => {
       try {
         const { data } = await octokit.search.code({
