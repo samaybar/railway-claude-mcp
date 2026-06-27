@@ -1144,6 +1144,7 @@ function createRailwayMcpServer(railwayToken) {
       projectId: z.string().describe("The project ID"),
       name: z.string().describe("Name for the new environment"),
     },
+    { title: "Create environment", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ projectId, name }) => {
       try {
         const data = await gqlRequest(
