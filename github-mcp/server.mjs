@@ -1005,6 +1005,7 @@ function createGitHubMcpServer() {
       path: z.string().optional().describe("Only commits affecting this path"),
       limit: z.number().optional().describe("Max commits to return (default: 30)"),
     },
+    { title: "List commits", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo, sha, path: filePath, limit }) => {
       try {
         const { data: commits } = await octokit.repos.listCommits({
