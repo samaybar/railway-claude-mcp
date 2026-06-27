@@ -1046,6 +1046,7 @@ function createGitHubMcpServer() {
       base: z.string().optional().describe("Base commit SHA (if not using PR)"),
       head: z.string().optional().describe("Head commit SHA (if not using PR)"),
     },
+    { title: "Get diff", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo, pull_number, base, head }) => {
       try {
         if (pull_number) {
