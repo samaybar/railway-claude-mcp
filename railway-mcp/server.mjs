@@ -1057,6 +1057,7 @@ function createRailwayMcpServer(railwayToken) {
         ),
       serviceId: z.string().describe("The service ID"),
     },
+    { title: "List domains", readOnlyHint: true, openWorldHint: true },
     async ({ projectId, environmentId, serviceId }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
