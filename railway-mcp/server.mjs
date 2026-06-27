@@ -510,6 +510,7 @@ function createRailwayMcpServer(railwayToken) {
         .optional()
         .describe("Limit to a single workspace id (from list-workspaces)."),
     },
+    { title: "List projects", readOnlyHint: true, openWorldHint: true },
     async ({ workspaceId }) => {
       try {
         let workspaces;
