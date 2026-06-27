@@ -471,6 +471,7 @@ function createRailwayMcpServer(railwayToken) {
     "list-workspaces",
     "List the Railway workspaces this connector can access (the ones you granted at login). Use a workspace id with list-projects or create-project.",
     {},
+    { title: "List workspaces", readOnlyHint: true, openWorldHint: true },
     async () => {
       try {
         const d = await gqlRequest(gql`
@@ -509,6 +510,7 @@ function createRailwayMcpServer(railwayToken) {
         .optional()
         .describe("Limit to a single workspace id (from list-workspaces)."),
     },
+    { title: "List projects", readOnlyHint: true, openWorldHint: true },
     async ({ workspaceId }) => {
       try {
         let workspaces;
@@ -576,6 +578,7 @@ function createRailwayMcpServer(railwayToken) {
           "Workspace id to create the project in (from list-workspaces)."
         ),
     },
+    { title: "Create project", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ name, workspaceId }) => {
       try {
         const data = await gqlRequest(
@@ -620,6 +623,7 @@ function createRailwayMcpServer(railwayToken) {
     "get-project",
     "Get details of a specific Railway project",
     { projectId: z.string().describe("The project ID") },
+    { title: "Get project", readOnlyHint: true, openWorldHint: true },
     async ({ projectId }) => {
       try {
         const data = await gqlRequest(
@@ -676,6 +680,7 @@ function createRailwayMcpServer(railwayToken) {
     "list-services",
     "List all services in a Railway project",
     { projectId: z.string().describe("The project ID") },
+    { title: "List services", readOnlyHint: true, openWorldHint: true },
     async ({ projectId }) => {
       try {
         const data = await gqlRequest(
@@ -736,6 +741,7 @@ function createRailwayMcpServer(railwayToken) {
           "Return raw, unmasked values. WARNING: this prints secret values (API keys, DB URLs) into the chat transcript. Defaults to false."
         ),
     },
+    { title: "List variables", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     async ({ projectId, environmentId, serviceId, reveal }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
@@ -796,6 +802,7 @@ function createRailwayMcpServer(railwayToken) {
         .record(z.string())
         .describe("Key-value pairs of variables to set"),
     },
+    { title: "Set variables", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     async ({ projectId, environmentId, serviceId, variables }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
@@ -840,6 +847,7 @@ function createRailwayMcpServer(railwayToken) {
       serviceId: z.string().describe("The service ID"),
       limit: z.coerce.number().int().optional().describe("Number of log lines (default 100)"),
     },
+    { title: "Get logs", readOnlyHint: true, openWorldHint: true },
     async ({ projectId, environmentId, serviceId, limit }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
@@ -926,6 +934,7 @@ function createRailwayMcpServer(railwayToken) {
         .optional()
         .describe("Number of deployments to show (default 10)"),
     },
+    { title: "List deployments", readOnlyHint: true, openWorldHint: true },
     async ({ projectId, environmentId, serviceId, limit }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
@@ -1002,6 +1011,7 @@ function createRailwayMcpServer(railwayToken) {
           "Port your app listens on. Optional — Railway auto-detects from the running service if omitted."
         ),
     },
+    { title: "Generate domain", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ projectId, environmentId, serviceId, targetPort }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
@@ -1047,6 +1057,7 @@ function createRailwayMcpServer(railwayToken) {
         ),
       serviceId: z.string().describe("The service ID"),
     },
+    { title: "List domains", readOnlyHint: true, openWorldHint: true },
     async ({ projectId, environmentId, serviceId }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
@@ -1133,6 +1144,7 @@ function createRailwayMcpServer(railwayToken) {
       projectId: z.string().describe("The project ID"),
       name: z.string().describe("Name for the new environment"),
     },
+    { title: "Create environment", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ projectId, name }) => {
       try {
         const data = await gqlRequest(
@@ -1186,6 +1198,7 @@ function createRailwayMcpServer(railwayToken) {
           "Environment ID to deploy into (defaults to project's production environment when projectId is provided)"
         ),
     },
+    { title: "Deploy template", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ searchQuery, templateId, projectId, environmentId }) => {
       try {
         if (!templateId) {
@@ -1312,6 +1325,7 @@ function createRailwayMcpServer(railwayToken) {
     "check-railway-status",
     "Check Railway platform status and API connectivity",
     {},
+    { title: "Check Railway status", readOnlyHint: true, openWorldHint: true },
     async () => {
       try {
         const data = await gqlRequest(gql`
@@ -1352,6 +1366,7 @@ function createRailwayMcpServer(railwayToken) {
         ),
       serviceId: z.string().describe("The service ID"),
     },
+    { title: "Redeploy service", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ projectId, environmentId, serviceId }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
@@ -1424,6 +1439,7 @@ function createRailwayMcpServer(railwayToken) {
         .optional()
         .describe("Branch to deploy (default: main)"),
     },
+    { title: "Create service from GitHub", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ projectId, environmentId, repo, name, branch }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
@@ -1504,6 +1520,7 @@ function createRailwayMcpServer(railwayToken) {
     {
       serviceId: z.string().describe("The service ID to delete"),
     },
+    { title: "Delete service", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     async ({ serviceId }) => {
       try {
         await gqlRequest(
@@ -1534,6 +1551,7 @@ function createRailwayMcpServer(railwayToken) {
         ),
       sql: z.string().describe("SQL query to execute"),
     },
+    { title: "Query Postgres", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     async ({ connectionString, sql }) => {
       const client = new pg.Client({ connectionString });
       try {
