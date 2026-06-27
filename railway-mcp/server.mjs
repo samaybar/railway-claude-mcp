@@ -802,6 +802,7 @@ function createRailwayMcpServer(railwayToken) {
         .record(z.string())
         .describe("Key-value pairs of variables to set"),
     },
+    { title: "Set variables", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     async ({ projectId, environmentId, serviceId, variables }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
