@@ -855,6 +855,7 @@ function createGitHubMcpServer() {
         .describe("Filter by state (default: open)"),
       limit: z.number().optional().describe("Max PRs to return (default: 30)"),
     },
+    { title: "List pull requests", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo, state, limit }) => {
       try {
         const { data: prs } = await octokit.pulls.list({
