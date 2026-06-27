@@ -293,9 +293,12 @@ function extractArgSummary(toolName, args = {}) {
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"}${a.targetPort ? ` port=${a.targetPort}` : ""}`;
     case "query-postgres": {
       // Show the first line of the SQL so you can eyeball SELECT vs. DROP
-      // without the full payload bleeding into chat.
+      // without the full payload bleeding into chat. Never log the DSN.
       const sql = (a.sql || "").replace(/\s+/g, " ").trim();
-      return `sql=${truncate(sql, 160)}`;
+      const target = a.connectionString
+        ? "raw-connection-string"
+        : `project=${a.projectId || "?"} service=${a.serviceId || "?"}`;
+      return `${target} sql=${truncate(sql, 140)}`;
     }
     case "create-volume":
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"} mount=${a.mountPath || "?"}`;
