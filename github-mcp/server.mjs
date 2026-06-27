@@ -621,6 +621,7 @@ function createGitHubMcpServer() {
       path: z.string().describe("Path to the file"),
       ref: z.string().optional().describe("Branch, tag, or SHA (default: default branch)"),
     },
+    { title: "Get file", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo, path: filePath, ref }) => {
       try {
         const { data } = await octokit.repos.getContent({
