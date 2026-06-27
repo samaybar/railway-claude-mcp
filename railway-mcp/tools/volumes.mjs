@@ -38,6 +38,7 @@ export function registerVolumeTools(server, deps) {
           "Absolute path inside the container where the volume should be mounted (e.g., /data)"
         ),
     },
+    { title: "Create volume", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ projectId, environmentId, serviceId, mountPath }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
