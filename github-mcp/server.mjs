@@ -568,6 +568,7 @@ function createGitHubMcpServer() {
         .optional()
         .describe("Source branch or SHA (default: default branch)"),
     },
+    { title: "Create branch", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ owner, repo, branch, from }) => {
       try {
         // Get the SHA to branch from
