@@ -164,6 +164,7 @@ export function registerVolumeTools(server, deps) {
     {
       volumeId: z.string().describe("The volume ID to delete"),
     },
+    { title: "Delete volume", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     async ({ volumeId }) => {
       try {
         await gqlRequest(
