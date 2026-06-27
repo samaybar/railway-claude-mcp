@@ -808,6 +808,7 @@ function createGitHubMcpServer() {
       message: z.string().describe("Commit message"),
       branch: z.string().optional().describe("Branch to commit to"),
     },
+    { title: "Delete file", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     async ({ owner, repo, path: filePath, message, branch }) => {
       try {
         // Get file SHA
