@@ -1551,6 +1551,7 @@ function createRailwayMcpServer(railwayToken) {
         ),
       sql: z.string().describe("SQL query to execute"),
     },
+    { title: "Query Postgres", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     async ({ connectionString, sql }) => {
       const client = new pg.Client({ connectionString });
       try {
