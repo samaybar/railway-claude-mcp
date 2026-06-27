@@ -224,8 +224,8 @@ setInterval(() => {
 // Tools flagged here generate a Discord alert on invocation. Most are
 // state-changing. Two exceptions are listed here even though they only *read*:
 //   - query-postgres: SQL is unconstrained; can be read OR write, always alert
-//   - list-variables: returns plaintext env var values (including secrets);
-//     effectively a secrets exfiltration tool, always alert
+//   - list-variables: surfaces the configured variable names for a service;
+//     values are always masked, but the name list is still worth an alert
 const DESTRUCTIVE_TOOLS = new Set([
   "create-project",
   "create-environment",
