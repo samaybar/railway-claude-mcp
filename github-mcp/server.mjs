@@ -410,6 +410,7 @@ function createGitHubMcpServer() {
         .describe("Sort field (default: updated)"),
       limit: z.number().optional().describe("Max repos to return (default: 30)"),
     },
+    { title: "List repositories", readOnlyHint: true, openWorldHint: true },
     async ({ type, sort, limit }) => {
       try {
         const { data: repos } = await octokit.repos.listForAuthenticatedUser({
