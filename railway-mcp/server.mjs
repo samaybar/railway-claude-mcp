@@ -1366,6 +1366,7 @@ function createRailwayMcpServer(railwayToken) {
         ),
       serviceId: z.string().describe("The service ID"),
     },
+    { title: "Redeploy service", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ projectId, environmentId, serviceId }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
