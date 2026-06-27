@@ -932,6 +932,7 @@ function createGitHubMcpServer() {
       body: z.string().optional().describe("PR description"),
       draft: z.boolean().optional().describe("Create as draft PR"),
     },
+    { title: "Create pull request", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ owner, repo, title, head, base, body, draft }) => {
       try {
         const { data: pr } = await octokit.pulls.create({
