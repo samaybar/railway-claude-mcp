@@ -478,6 +478,7 @@ function createGitHubMcpServer() {
       private: z.boolean().optional().describe("Make repository private (default: true)"),
       owner: z.string().optional().describe("Org to create repo in (defaults to authenticated user)"),
     },
+    { title: "Create repository", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ name, description, private: isPrivate = true, owner }) => {
       try {
         let data;
