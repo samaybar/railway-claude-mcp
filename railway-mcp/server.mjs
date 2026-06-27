@@ -224,8 +224,8 @@ setInterval(() => {
 // Tools flagged here generate a Discord alert on invocation. Most are
 // state-changing. Two exceptions are listed here even though they only *read*:
 //   - query-postgres: SQL is unconstrained; can be read OR write, always alert
-//   - list-variables: returns plaintext env var values (including secrets);
-//     effectively a secrets exfiltration tool, always alert
+//   - list-variables: surfaces the configured variable names for a service;
+//     values are always masked, but the name list is still worth an alert
 const DESTRUCTIVE_TOOLS = new Set([
   "create-project",
   "create-environment",
@@ -242,9 +242,8 @@ const DESTRUCTIVE_TOOLS = new Set([
 ]);
 
 // Tools that get an extra-attention red color rather than orange.
-// list-variables is critical because anyone calling it with reveal=true can
-// dump every secret on the service in one call (API keys, DB connection
-// strings, etc). Values are masked by default.
+// list-variables is included because the set of configured variable names is
+// sensitive metadata, even though values are always masked in the output.
 const CRITICAL_TOOLS = new Set([
   "delete-service",
   "delete-volume",
@@ -293,9 +292,12 @@ function extractArgSummary(toolName, args = {}) {
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"}${a.targetPort ? ` port=${a.targetPort}` : ""}`;
     case "query-postgres": {
       // Show the first line of the SQL so you can eyeball SELECT vs. DROP
-      // without the full payload bleeding into chat.
+      // without the full payload bleeding into chat. Never log the DSN.
       const sql = (a.sql || "").replace(/\s+/g, " ").trim();
-      return `sql=${truncate(sql, 160)}`;
+      const target = a.connectionString
+        ? "raw-connection-string"
+        : `project=${a.projectId || "?"} service=${a.serviceId || "?"}`;
+      return `${target} sql=${truncate(sql, 140)}`;
     }
     case "create-volume":
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"} mount=${a.mountPath || "?"}`;
@@ -724,7 +726,7 @@ function createRailwayMcpServer(railwayToken) {
   // -- list-variables --
   server.tool(
     "list-variables",
-    "List environment variables for a service. Values are MASKED by default so secrets don't leak into the conversation; only the variable names and value lengths are shown. Pass reveal=true to return raw values (use sparingly, and never for a service you don't own). environmentId defaults to the project's production environment.",
+    "List environment variables for a service. Values are always MASKED — only variable names and value lengths are shown, never the secret values themselves. To view or edit real values, use the Railway variables-tab link included in the response. environmentId defaults to the project's production environment.",
     {
       projectId: z.string().describe("The project ID"),
       environmentId: z
@@ -734,15 +736,9 @@ function createRailwayMcpServer(railwayToken) {
           "The environment ID (defaults to the project's production environment)"
         ),
       serviceId: z.string().describe("The service ID"),
-      reveal: z
-        .boolean()
-        .optional()
-        .describe(
-          "Return raw, unmasked values. WARNING: this prints secret values (API keys, DB URLs) into the chat transcript. Defaults to false."
-        ),
     },
-    { title: "List variables", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    async ({ projectId, environmentId, serviceId, reveal }) => {
+    { title: "List variables", readOnlyHint: true, openWorldHint: true },
+    async ({ projectId, environmentId, serviceId }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
         const data = await gqlRequest(
@@ -761,23 +757,24 @@ function createRailwayMcpServer(railwayToken) {
         const vars = data.variables || {};
         const entries = Object.entries(vars);
 
+        // Deep link to the service's variables tab, where real values can be
+        // viewed/edited in an authenticated context (never in the transcript).
+        const dashboardUrl = `https://railway.com/project/${projectId}/service/${serviceId}/variables`;
+
         if (entries.length === 0) {
-          return toolResponse("No variables found.");
+          return toolResponse(
+            `No variables returned for this service.\n\n` +
+              `Note: sealed variables don't appear here. View or edit values in the Railway dashboard:\n${dashboardUrl}`
+          );
         }
 
         const formatted = entries
-          .map(
-            ([key, value]) =>
-              `- **${key}** = \`${reveal ? value : maskValue(value)}\``
-          )
+          .map(([key, value]) => `- **${key}** = \`${maskValue(value)}\``)
           .join("\n");
 
-        const note = reveal
-          ? ""
-          : "\n\n_Values are masked. Call again with `reveal: true` to see raw values (this exposes secrets in the chat)._";
-
         return toolResponse(
-          `Found ${entries.length} variable(s):\n\n${formatted}${note}`
+          `Found ${entries.length} variable(s) (values masked):\n\n${formatted}\n\n` +
+            `_Values are masked and never shown here. To view or edit real values, open the Railway variables tab:_\n${dashboardUrl}`
         );
       } catch (error) {
         return toolResponse(`Failed to list variables: ${error.message}`);
@@ -1542,34 +1539,93 @@ function createRailwayMcpServer(railwayToken) {
   // -- query-postgres --
   server.tool(
     "query-postgres",
-    "Execute a SQL query against a PostgreSQL database",
+    "Execute a SQL query against a PostgreSQL database. Preferred: pass projectId + serviceId (of the Postgres service) and the server resolves the connection string itself — the DSN never enters the chat. Alternatively pass a raw connectionString as a fallback for databases not hosted on Railway (note: a raw connection string you pass here will appear in the transcript). environmentId defaults to the project's production environment.",
     {
+      projectId: z
+        .string()
+        .optional()
+        .describe("Project ID of the Railway Postgres service (preferred over connectionString)"),
+      environmentId: z
+        .string()
+        .optional()
+        .describe(
+          "The environment ID (defaults to the project's production environment). Only used with projectId/serviceId."
+        ),
+      serviceId: z
+        .string()
+        .optional()
+        .describe("Service ID of the Railway Postgres service (preferred over connectionString)"),
       connectionString: z
         .string()
+        .optional()
         .describe(
-          "PostgreSQL connection string (e.g., postgresql://user:pass@host:port/db)"
+          "Fallback: a raw PostgreSQL connection string (e.g., postgresql://user:pass@host:port/db). Use only for non-Railway databases; this value appears in the transcript. Prefer projectId + serviceId."
         ),
       sql: z.string().describe("SQL query to execute"),
     },
     { title: "Query Postgres", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    async ({ connectionString, sql }) => {
-      const client = new pg.Client({ connectionString });
+    async ({ projectId, environmentId, serviceId, connectionString, sql }) => {
       try {
-        await client.connect();
-        const result = await client.query(sql);
-        await client.end();
-
-        return toolResponse(
-          `Query executed successfully.\n\n` +
-            `Rows returned: ${result.rowCount}\n\n` +
-            `Results:\n\`\`\`json\n${JSON.stringify(result.rows, null, 2)}\n\`\`\``
-        );
-      } catch (error) {
-        try {
-          await client.end();
-        } catch {
-          // Ignore cleanup errors
+        // Resolve the connection string: prefer a server-side lookup from the
+        // Postgres service's own variables so the DSN never transits the model.
+        let dsn = connectionString;
+        if (!dsn) {
+          if (!projectId || !serviceId) {
+            return toolResponse(
+              "Provide either projectId + serviceId (preferred — resolves the DSN server-side) " +
+                "or a raw connectionString (fallback for non-Railway databases)."
+            );
+          }
+          const envId = await resolveEnvironmentId(projectId, environmentId);
+          const data = await gqlRequest(
+            gql`
+              query ($projectId: String!, $environmentId: String!, $serviceId: String!) {
+                variables(
+                  projectId: $projectId
+                  environmentId: $environmentId
+                  serviceId: $serviceId
+                )
+              }
+            `,
+            { projectId, environmentId: envId, serviceId }
+          );
+          const vars = data.variables || {};
+          // Railway Postgres exposes DATABASE_URL; prefer the public proxy URL
+          // when present since this server connects from outside the project.
+          dsn =
+            vars.DATABASE_PUBLIC_URL ||
+            vars.DATABASE_URL ||
+            vars.POSTGRES_URL ||
+            null;
+          if (!dsn) {
+            return toolResponse(
+              "Could not find a connection string on that service " +
+                "(looked for DATABASE_PUBLIC_URL, DATABASE_URL, POSTGRES_URL). " +
+                "It may be sealed, or this isn't a Postgres service. Pass connectionString explicitly if needed."
+            );
+          }
         }
+
+        const client = new pg.Client({ connectionString: dsn });
+        try {
+          await client.connect();
+          const result = await client.query(sql);
+          await client.end();
+
+          return toolResponse(
+            `Query executed successfully.\n\n` +
+              `Rows returned: ${result.rowCount}\n\n` +
+              `Results:\n\`\`\`json\n${JSON.stringify(result.rows, null, 2)}\n\`\`\``
+          );
+        } catch (error) {
+          try {
+            await client.end();
+          } catch {
+            // Ignore cleanup errors
+          }
+          return toolResponse(`Query failed: ${error.message}`);
+        }
+      } catch (error) {
         return toolResponse(`Query failed: ${error.message}`);
       }
     }
