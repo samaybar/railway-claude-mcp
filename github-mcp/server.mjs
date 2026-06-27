@@ -531,6 +531,7 @@ function createGitHubMcpServer() {
       owner: z.string().describe("Repository owner"),
       repo: z.string().describe("Repository name"),
     },
+    { title: "List branches", readOnlyHint: true, openWorldHint: true },
     async ({ owner, repo }) => {
       try {
         const { data: branches } = await octokit.repos.listBranches({
