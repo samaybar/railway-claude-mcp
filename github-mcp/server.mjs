@@ -721,6 +721,7 @@ function createGitHubMcpServer() {
       message: z.string().describe("Commit message"),
       branch: z.string().optional().describe("Branch to commit to (default: default branch)"),
     },
+    { title: "Patch file", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     async ({ owner, repo, path: filePath, old_str, new_str, message, branch }) => {
       try {
         // Fetch current file content + sha (server-side, with the server's token).
