@@ -2057,7 +2057,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           `Branch **${branch}** created successfully from ${from || "default branch"}.`
         );
       } catch (error) {
-        return toolResponse(`Failed to create branch: ${error.message}`);
+        return toolError("Failed to create branch", error);
       }
     }
   );
