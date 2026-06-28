@@ -1149,7 +1149,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   // -- railway-generate-domain --
   server.tool(
     "railway-generate-domain",
-    "Generate a Railway domain for a service. environmentId defaults to the project's production environment. targetPort is optional — Railway will auto-detect from the running service if omitted.",
+    "Generate a Railway domain for a service. environmentId defaults to the project's production environment. IMPORTANT: leave targetPort UNSET unless the user explicitly tells you the port — Railway auto-detects the port the app actually listens on, and guessing wrong (e.g. assuming 3000 when the app binds 8080) produces a domain that returns a Railway error page. Only pass targetPort if a previous attempt failed and the logs confirmed the real port.",
     {
       projectId: z.string().describe("The project ID"),
       environmentId: z
