@@ -2513,7 +2513,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
 
         return toolResponse("Provide either pull_number or both base and head.");
       } catch (error) {
-        return toolResponse(`Failed to get diff: ${error.message}`);
+        return toolError("Failed to get diff", error);
       }
     }
   );
