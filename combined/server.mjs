@@ -1878,7 +1878,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
 
         return toolResponse(`Found ${repos.length} repository(s):\n\n${formatted}`);
       } catch (error) {
-        return toolResponse(`Failed to list repos: ${error.message}`);
+        return toolError("Failed to list repos", error);
       }
     }
   );
