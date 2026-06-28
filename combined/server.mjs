@@ -3406,7 +3406,7 @@ app.post("/mcp", checkAuth, async (req, res) => {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
-    const server = createRailwayMcpServer(railwayToken, githubToken);
+    const server = createRailwayMcpServer(railwayToken, githubToken, req.authToken);
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (err) {
