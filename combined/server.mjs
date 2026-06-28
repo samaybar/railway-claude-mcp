@@ -2372,7 +2372,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   // -- github-create-pull-request --
   server.tool(
     "github-create-pull-request",
-    "Create a new pull request",
+    "Create a new pull request. Prefer this only when a change benefits from review or easy reversibility (risky edits, larger refactors, or when the user asked for a PR). For simple changes to an existing project — especially for a user who doesn't want to deal with GitHub — commit directly to the main branch with github-create-or-update-file instead, which goes live without a PR-and-merge round trip.",
     {
       owner: z.string().describe("Repository owner"),
       repo: z.string().describe("Repository name"),
