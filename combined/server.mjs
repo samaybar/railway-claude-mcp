@@ -501,6 +501,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     "github-list-commits": "ghr", "github-get-diff": "ghr",
     "github-create-repo": "ghw", "github-create-or-update-file": "ghw", "github-patch-file": "ghw",
     "github-delete-file": "ghw", "github-create-branch": "ghw", "github-create-pull-request": "ghw",
+    "github-merge-pull-request": "ghw",
   };
   const allowedTool = (g) =>
     g == null
