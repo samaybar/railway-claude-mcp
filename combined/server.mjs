@@ -2150,7 +2150,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `URL: ${data.content?.html_url || data.commit.html_url}`
         );
       } catch (error) {
-        return toolResponse(`Failed to create/update file: ${error.message}`);
+        return toolError("Failed to create/update file", error);
       }
     }
   );
