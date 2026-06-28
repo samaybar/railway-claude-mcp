@@ -2284,7 +2284,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `Commit: ${data.commit.sha.slice(0, 7)} - ${data.commit.message}`
         );
       } catch (error) {
-        return toolResponse(`Failed to delete file: ${error.message}`);
+        return toolError("Failed to delete file", error);
       }
     }
   );
