@@ -746,7 +746,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `Environments:\n${envLines || "  none"}`
         );
       } catch (error) {
-        return toolResponse(`Failed to create project: ${error.message}`);
+        return toolError("Failed to create project", error);
       }
     }
   );
