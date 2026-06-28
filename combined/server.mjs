@@ -1187,7 +1187,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           `Domain generated: **${domain}**\n\nYour service will be available at https://${domain}`
         );
       } catch (error) {
-        return toolResponse(`Failed to generate domain: ${error.message}`);
+        return toolError("Failed to generate domain", error);
       }
     }
   );
