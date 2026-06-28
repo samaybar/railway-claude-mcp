@@ -1224,7 +1224,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           `Environment created: **${env.name}** (ID: ${env.id})`
         );
       } catch (error) {
-        return toolResponse(`Failed to create environment: ${error.message}`);
+        return toolError("Failed to create environment", error);
       }
     }
   );
