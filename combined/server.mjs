@@ -1062,7 +1062,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           `Logs for deployment ${deployment.id} (${deployment.status}):\n\n${formatted}`
         );
       } catch (error) {
-        return toolResponse(`Failed to get logs: ${error.message}`);
+        return toolError("Failed to get logs", error);
       }
     }
   );
