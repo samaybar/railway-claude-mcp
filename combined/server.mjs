@@ -1723,7 +1723,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           "Updating this connector to the latest version — it'll redeploy in ~1-2 minutes. Your GitHub connection and settings persist. If the available tools change, reconnect the connector in Claude afterward."
         );
       } catch (error) {
-        return toolResponse(`Failed to update the connector: ${error.message}`);
+        return toolError("Failed to update the connector", error);
       }
     }
   );
