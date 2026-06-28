@@ -1188,8 +1188,11 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
         );
 
         const domain = data.serviceDomainCreate?.domain;
+        const portNote = targetPort !== undefined
+          ? `\n\nNote: this domain was pinned to port ${targetPort}. If the page shows a Railway error, the app is probably listening on a different port — call railway-get-logs to find the real port (look for "listening on 0.0.0.0:<port>"), then generate a new domain with that port.`
+          : `\n\nIf the page shows a Railway error, the service may not be listening yet or is on an unexpected port — check railway-get-logs.`;
         return toolResponse(
-          `Domain generated: **${domain}**\n\nYour service will be available at https://${domain}`
+          `Domain generated: **${domain}**\n\nYour service will be available at https://${domain}${portNote}`
         );
       } catch (error) {
         return toolError("Failed to generate domain", error);
