@@ -2472,7 +2472,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
 
         return toolResponse(`Found ${commits.length} commit(s):\n\n${formatted}`);
       } catch (error) {
-        return toolResponse(`Failed to list commits: ${error.message}`);
+        return toolError("Failed to list commits", error);
       }
     }
   );
