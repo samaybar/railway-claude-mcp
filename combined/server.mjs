@@ -802,7 +802,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `Services:\n${svcs}`
         );
       } catch (error) {
-        return toolResponse(`Failed to get project: ${error.message}`);
+        return toolError("Failed to get project", error);
       }
     }
   );
