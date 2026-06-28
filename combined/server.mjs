@@ -694,7 +694,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
         }
         return toolResponse(blocks.join("\n\n"));
       } catch (error) {
-        return toolResponse(`Failed to list projects: ${error.message}`);
+        return toolError("Failed to list projects", error);
       }
     }
   );
