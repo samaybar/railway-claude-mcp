@@ -1906,7 +1906,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `URL: ${r.html_url}`
         );
       } catch (error) {
-        return toolResponse(`Failed to get repo: ${error.message}`);
+        return toolError("Failed to get repo", error);
       }
     }
   );
