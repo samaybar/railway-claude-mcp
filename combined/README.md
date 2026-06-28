@@ -22,7 +22,7 @@ Identical to the standalone servers: **Login with Railway** (OAuth 2.1 + OIDC, P
 | `RAILWAY_MODE` | No | Railway capability: `read`, `deploy` (default), or `full` (adds delete). |
 | `GITHUB_MODE` | No | GitHub capability: `off`, `read`, or `write` (default). `off` hides GitHub entirely. |
 | `GITHUB_TOKEN` | No | Optional **static** GitHub token (fallback). The preferred way to turn on GitHub is the **`github-connect`** tool (GitHub App device flow). Token form: fine-grained with Contents + Pull requests + Administration = R/W, Metadata = Read; or classic `repo`. |
-| `RAILWAY_API_TOKEN` | No | Static override; default is to act as the logged-in user. |
+| `RAILWAY_API_TOKEN` | No | **Leave blank for normal use.** Default is to act as the logged-in user, with the session refreshed automatically. Set this only for unattended or shared deployments (no human to reconnect, or one fixed service identity). Use an account token, not a project token. |
 | `ALLOWED_RAILWAY_EMAILS` | No | Comma-separated allowed emails; else trust-on-first-use. |
 | `RAILWAY_OAUTH_CLIENT_ID` / `_SECRET` | No | Pre-registered OAuth app; else DCR self-registration. |
 | `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_APP_SLUG` | No | The GitHub App that `github-connect` uses (defaults baked in). |

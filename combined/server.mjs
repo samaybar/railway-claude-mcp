@@ -439,6 +439,15 @@ function toolResponse(text) {
   return { content: [{ type: "text", text }] };
 }
 
+// Format a caught error for a tool response. A Railway auth failure (after a
+// failed refresh) carries a ready-to-read reconnect message, so we surface it
+// as-is instead of burying it under a "Failed to X" prefix. Everything else
+// keeps the prefix so the user knows which operation failed.
+function toolError(prefix, error) {
+  if (error?.name === "RailwayAuthError") return toolResponse(error.message);
+  return toolResponse(`${prefix}: ${error?.message ?? String(error)}`);
+}
+
 // Mask a variable value so secrets don't bleed into the chat transcript.
 // We can't reliably tell a secret apart from a benign value, so we mask
 // everything by default and let the caller opt into raw values per call.
@@ -454,7 +463,7 @@ function maskValue(value) {
 // `railwayToken` is the bearer used for every Railway API call in this request:
 // either the static RAILWAY_API_TOKEN override or the connecting user's
 // Login-with-Railway access token (resolved + refreshed per request).
-function createRailwayMcpServer(railwayToken, githubToken) {
+function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   const server = new McpServer(
     {
       name: "railway-github-mcp",
@@ -505,18 +514,61 @@ function createRailwayMcpServer(railwayToken, githubToken) {
   server.tool = (name, ...rest) =>
     allowedTool(TOOL_GROUP[name]) ? _registerTool(name, ...rest) : undefined;
 
-  const railwayClient = new GraphQLClient(
+  // Mutable bearer: a long MCP session can outlive the access token, so we may
+  // swap in a refreshed token mid-session and rebuild the client.
+  let currentRailwayToken = railwayToken;
+  let railwayClient = new GraphQLClient(
     "https://backboard.railway.com/graphql/v2",
     {
       headers: {
-        Authorization: `Bearer ${railwayToken}`,
+        Authorization: `Bearer ${currentRailwayToken}`,
         "x-source": "railway-mcp-server-remote",
       },
     }
   );
 
+  // A logged-out/expired Railway session surfaces as a GraphQL "Not Authorized"
+  // error rather than an HTTP 401, so match on the message.
+  function isNotAuthorized(err) {
+    const m = String(err?.message || err || "");
+    return /not authorized/i.test(m);
+  }
+
+  // Raised when a Railway call can't be authorized even after a refresh attempt.
+  // Tools catch this and return a clear, actionable reconnect message instead of
+  // leaking a raw GraphQL error (which renders as an empty/confusing response).
+  class RailwayAuthError extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "RailwayAuthError";
+    }
+  }
+  const RECONNECT_MESSAGE =
+    "Your Railway login has expired. Reconnect this connector " +
+    "(in Claude: Settings → Connectors → reconnect; in ChatGPT: re-authorize " +
+    "the connector) and try again.";
+
   async function gqlRequest(query, variables) {
-    return railwayClient.request(query, variables);
+    try {
+      return await railwayClient.request(query, variables);
+    } catch (err) {
+      // Static-token deployments can't refresh; a stale override is a config
+      // problem for the operator, not something the end user can reconnect.
+      if (!isNotAuthorized(err) || RAILWAY_API_TOKEN || !mcpToken) throw err;
+      const fresh = await forceRailwayRefresh(mcpToken);
+      if (!fresh) throw new RailwayAuthError(RECONNECT_MESSAGE);
+      currentRailwayToken = fresh;
+      railwayClient = new GraphQLClient(
+        "https://backboard.railway.com/graphql/v2",
+        {
+          headers: {
+            Authorization: `Bearer ${currentRailwayToken}`,
+            "x-source": "railway-mcp-server-remote",
+          },
+        }
+      );
+      return await railwayClient.request(query, variables);
+    }
   }
 
   // Resolve an environment ID for a project: return it as-is if given,
@@ -578,7 +630,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             ws.map((w) => `- **${w.name}** (${w.id})`).join("\n")
         );
       } catch (error) {
-        return toolResponse(`Failed to list workspaces: ${error.message}`);
+        return toolError("Failed to list workspaces", error);
       }
     }
   );
@@ -642,7 +694,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
         }
         return toolResponse(blocks.join("\n\n"));
       } catch (error) {
-        return toolResponse(`Failed to list projects: ${error.message}`);
+        return toolError("Failed to list projects", error);
       }
     }
   );
@@ -694,7 +746,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             `Environments:\n${envLines || "  none"}`
         );
       } catch (error) {
-        return toolResponse(`Failed to create project: ${error.message}`);
+        return toolError("Failed to create project", error);
       }
     }
   );
@@ -750,7 +802,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             `Services:\n${svcs}`
         );
       } catch (error) {
-        return toolResponse(`Failed to get project: ${error.message}`);
+        return toolError("Failed to get project", error);
       }
     }
   );
@@ -818,7 +870,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           `Found ${services.length} service(s):\n\n${formatted}`
         );
       } catch (error) {
-        return toolResponse(`Failed to list services: ${error.message}`);
+        return toolError("Failed to list services", error);
       }
     }
   );
@@ -881,7 +933,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           `Found ${entries.length} variable(s):\n\n${formatted}${note}`
         );
       } catch (error) {
-        return toolResponse(`Failed to list variables: ${error.message}`);
+        return toolError("Failed to list variables", error);
       }
     }
   );
@@ -927,7 +979,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           `Successfully set ${keys.length} variable(s): ${keys.join(", ")}`
         );
       } catch (error) {
-        return toolResponse(`Failed to set variables: ${error.message}`);
+        return toolError("Failed to set variables", error);
       }
     }
   );
@@ -1010,7 +1062,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           `Logs for deployment ${deployment.id} (${deployment.status}):\n\n${formatted}`
         );
       } catch (error) {
-        return toolResponse(`Failed to get logs: ${error.message}`);
+        return toolError("Failed to get logs", error);
       }
     }
   );
@@ -1084,7 +1136,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           `Found ${deployments.length} deployment(s):\n\n${formatted}`
         );
       } catch (error) {
-        return toolResponse(`Failed to list deployments: ${error.message}`);
+        return toolError("Failed to list deployments", error);
       }
     }
   );
@@ -1135,7 +1187,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           `Domain generated: **${domain}**\n\nYour service will be available at https://${domain}`
         );
       } catch (error) {
-        return toolResponse(`Failed to generate domain: ${error.message}`);
+        return toolError("Failed to generate domain", error);
       }
     }
   );
@@ -1172,7 +1224,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           `Environment created: **${env.name}** (ID: ${env.id})`
         );
       } catch (error) {
-        return toolResponse(`Failed to create environment: ${error.message}`);
+        return toolError("Failed to create environment", error);
       }
     }
   );
@@ -1317,7 +1369,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             `Check the Railway dashboard for deployment progress.`
         );
       } catch (error) {
-        return toolResponse(`Failed to deploy template: ${error.message}`);
+        return toolError("Failed to deploy template", error);
       }
     }
   );
@@ -1442,7 +1494,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           `Redeployment triggered for service. Check the dashboard for progress.`
         );
       } catch (error) {
-        return toolResponse(`Failed to redeploy: ${error.message}`);
+        return toolError("Failed to redeploy", error);
       }
     }
   );
@@ -1576,7 +1628,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             `Use railway-list-deployments to check build progress.`
         );
       } catch (error) {
-        return toolResponse(`Failed to create service: ${error.message}`);
+        return toolError("Failed to create service", error);
       }
     }
   );
@@ -1601,7 +1653,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
 
         return toolResponse(`Service ${serviceId} deleted successfully.`);
       } catch (error) {
-        return toolResponse(`Failed to delete service: ${error.message}`);
+        return toolError("Failed to delete service", error);
       }
     }
   );
@@ -1671,7 +1723,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           "Updating this connector to the latest version — it'll redeploy in ~1-2 minutes. Your GitHub connection and settings persist. If the available tools change, reconnect the connector in Claude afterward."
         );
       } catch (error) {
-        return toolResponse(`Failed to update the connector: ${error.message}`);
+        return toolError("Failed to update the connector", error);
       }
     }
   );
@@ -1826,7 +1878,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
 
         return toolResponse(`Found ${repos.length} repository(s):\n\n${formatted}`);
       } catch (error) {
-        return toolResponse(`Failed to list repos: ${error.message}`);
+        return toolError("Failed to list repos", error);
       }
     }
   );
@@ -1854,7 +1906,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             `URL: ${r.html_url}`
         );
       } catch (error) {
-        return toolResponse(`Failed to get repo: ${error.message}`);
+        return toolError("Failed to get repo", error);
       }
     }
   );
@@ -1919,7 +1971,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             privacyNote
         );
       } catch (error) {
-        return toolResponse(`Failed to create repo: ${error.message}`);
+        return toolError("Failed to create repo", error);
       }
     }
   );
@@ -1950,7 +2002,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
 
         return toolResponse(`Found ${branches.length} branch(es):\n\n${formatted}`);
       } catch (error) {
-        return toolResponse(`Failed to list branches: ${error.message}`);
+        return toolError("Failed to list branches", error);
       }
     }
   );
@@ -2005,7 +2057,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           `Branch **${branch}** created successfully from ${from || "default branch"}.`
         );
       } catch (error) {
-        return toolResponse(`Failed to create branch: ${error.message}`);
+        return toolError("Failed to create branch", error);
       }
     }
   );
@@ -2046,7 +2098,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
           `**${filePath}** (${data.size} bytes, SHA: ${data.sha})\n\n\`\`\`\n${content}\n\`\`\``
         );
       } catch (error) {
-        return toolResponse(`Failed to get file: ${error.message}`);
+        return toolError("Failed to get file", error);
       }
     }
   );
@@ -2098,7 +2150,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             `URL: ${data.content?.html_url || data.commit.html_url}`
         );
       } catch (error) {
-        return toolResponse(`Failed to create/update file: ${error.message}`);
+        return toolError("Failed to create/update file", error);
       }
     }
   );
@@ -2188,7 +2240,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             `Failed to patch: the file changed between read and write (sha conflict). Retry the patch.`
           );
         }
-        return toolResponse(`Failed to patch file: ${error.message}`);
+        return toolError("Failed to patch file", error);
       }
     }
   );
@@ -2232,7 +2284,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             `Commit: ${data.commit.sha.slice(0, 7)} - ${data.commit.message}`
         );
       } catch (error) {
-        return toolResponse(`Failed to delete file: ${error.message}`);
+        return toolError("Failed to delete file", error);
       }
     }
   );
@@ -2274,7 +2326,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
 
         return toolResponse(`Found ${prs.length} pull request(s):\n\n${formatted}`);
       } catch (error) {
-        return toolResponse(`Failed to list PRs: ${error.message}`);
+        return toolError("Failed to list PRs", error);
       }
     }
   );
@@ -2307,7 +2359,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             `**Description:**\n${pr.body || "No description"}`
         );
       } catch (error) {
-        return toolResponse(`Failed to get PR: ${error.message}`);
+        return toolError("Failed to get PR", error);
       }
     }
   );
@@ -2344,7 +2396,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
             `URL: ${pr.html_url}`
         );
       } catch (error) {
-        return toolResponse(`Failed to create PR: ${error.message}`);
+        return toolError("Failed to create PR", error);
       }
     }
   );
@@ -2420,7 +2472,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
 
         return toolResponse(`Found ${commits.length} commit(s):\n\n${formatted}`);
       } catch (error) {
-        return toolResponse(`Failed to list commits: ${error.message}`);
+        return toolError("Failed to list commits", error);
       }
     }
   );
@@ -2461,7 +2513,7 @@ function createRailwayMcpServer(railwayToken, githubToken) {
 
         return toolResponse("Provide either pull_number or both base and head.");
       } catch (error) {
-        return toolResponse(`Failed to get diff: ${error.message}`);
+        return toolError("Failed to get diff", error);
       }
     }
   );
@@ -2753,14 +2805,36 @@ async function resolveRailwayAccessToken(mcpToken) {
   const rw = entry?.railway;
   if (!rw) return null;
   if (Date.now() < rw.expiresAt - 60 * 1000) return rw.accessToken;
-  if (!rw.refreshToken) return rw.accessToken;
+  // Access token is stale. We must refresh; if we can't, the token is dead and
+  // returning it anyway just produces "Not Authorized" on every downstream call.
+  // Return null instead so the caller surfaces a clear "reconnect" message.
+  if (!rw.refreshToken) return null;
   const refreshed = await railwayRefresh(rw.refreshToken);
   if (refreshed?.access_token) {
     rw.accessToken = refreshed.access_token;
     if (refreshed.refresh_token) rw.refreshToken = refreshed.refresh_token;
     rw.expiresAt = Date.now() + (refreshed.expires_in || 3600) * 1000;
     saveStore();
+    return rw.accessToken;
   }
+  // Refresh failed (refresh token expired or revoked). Treat as logged out.
+  return null;
+}
+
+// Force a Railway token refresh for a session regardless of expiry clock, used
+// when a live API call comes back Not Authorized mid-session. Returns the new
+// access token, or null if the session can't be refreshed (caller should tell
+// the user to reconnect). Skipped entirely when a static override is in play.
+async function forceRailwayRefresh(mcpToken) {
+  if (RAILWAY_API_TOKEN) return null;
+  const rw = accessTokens.get(mcpToken)?.railway;
+  if (!rw?.refreshToken) return null;
+  const refreshed = await railwayRefresh(rw.refreshToken);
+  if (!refreshed?.access_token) return null;
+  rw.accessToken = refreshed.access_token;
+  if (refreshed.refresh_token) rw.refreshToken = refreshed.refresh_token;
+  rw.expiresAt = Date.now() + (refreshed.expires_in || 3600) * 1000;
+  saveStore();
   return rw.accessToken;
 }
 
@@ -3332,7 +3406,7 @@ app.post("/mcp", checkAuth, async (req, res) => {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
-    const server = createRailwayMcpServer(railwayToken, githubToken);
+    const server = createRailwayMcpServer(railwayToken, githubToken, req.authToken);
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (err) {
