@@ -295,6 +295,7 @@ const CRITICAL_TOOLS = new Set([
   "railway-set-variables",
   "railway-list-variables",
   "railway-query-postgres",
+  "github-merge-pull-request",
 ]);
 
 const SESSION_ALERT_DEBOUNCE_MS = HOUR_MS;
