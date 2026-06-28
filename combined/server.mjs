@@ -346,6 +346,8 @@ function extractArgSummary(toolName, args = {}) {
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"} mount=${a.mountPath || "?"}`;
     case "railway-delete-volume":
       return `volume=${a.volumeId || "?"}`;
+    case "github-merge-pull-request":
+      return `repo=${a.owner || "?"}/${a.repo || "?"} PR#${a.pull_number ?? "?"}${a.merge_method ? ` (${a.merge_method})` : ""}`;
     default:
       return "";
   }
