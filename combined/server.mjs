@@ -1136,7 +1136,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           `Found ${deployments.length} deployment(s):\n\n${formatted}`
         );
       } catch (error) {
-        return toolResponse(`Failed to list deployments: ${error.message}`);
+        return toolError("Failed to list deployments", error);
       }
     }
   );
