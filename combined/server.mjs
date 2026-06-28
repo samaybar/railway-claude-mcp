@@ -2396,7 +2396,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `URL: ${pr.html_url}`
         );
       } catch (error) {
-        return toolResponse(`Failed to create PR: ${error.message}`);
+        return toolError("Failed to create PR", error);
       }
     }
   );
