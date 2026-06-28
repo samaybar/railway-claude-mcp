@@ -439,6 +439,15 @@ function toolResponse(text) {
   return { content: [{ type: "text", text }] };
 }
 
+// Format a caught error for a tool response. A Railway auth failure (after a
+// failed refresh) carries a ready-to-read reconnect message, so we surface it
+// as-is instead of burying it under a "Failed to X" prefix. Everything else
+// keeps the prefix so the user knows which operation failed.
+function toolError(prefix, error) {
+  if (error?.name === "RailwayAuthError") return toolResponse(error.message);
+  return toolResponse(`${prefix}: ${error?.message ?? String(error)}`);
+}
+
 // Mask a variable value so secrets don't bleed into the chat transcript.
 // We can't reliably tell a secret apart from a benign value, so we mask
 // everything by default and let the caller opt into raw values per call.
