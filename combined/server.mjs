@@ -2240,7 +2240,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `Failed to patch: the file changed between read and write (sha conflict). Retry the patch.`
           );
         }
-        return toolResponse(`Failed to patch file: ${error.message}`);
+        return toolError("Failed to patch file", error);
       }
     }
   );
