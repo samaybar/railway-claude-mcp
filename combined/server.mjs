@@ -2467,6 +2467,151 @@ function createRailwayMcpServer(railwayToken, githubToken) {
   );
   }
 
+  // -- search / fetch (ChatGPT deep-research / company-knowledge compatibility) --
+  // ChatGPT requires an MCP server to expose tools named exactly `search` and
+  // `fetch`, returning data as BOTH structuredContent and a JSON string in the
+  // content array (per OpenAI's compatibility schema). These are read-only and
+  // always registered. `search` matches the user's Railway projects and (if
+  // connected) GitHub repos by name; `fetch` resolves a result id to full detail.
+  // Ids are namespaced so `fetch` knows how to resolve them.
+  const searchFetchResult = (payload) => ({
+    structuredContent: payload,
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+  });
+
+  server.tool(
+    "search",
+    "Search the user's Railway projects and connected GitHub repositories by name. Returns a list of results (id, title, url) to use with the fetch tool. Present for ChatGPT connector compatibility.",
+    { query: z.string().describe("Text to match against Railway project and GitHub repo names") },
+    async ({ query }) => {
+      const q = (query || "").toLowerCase().trim();
+      const results = [];
+      try {
+        const wd = await gqlRequest(gql`
+          query { me { workspaces { id name } } }
+        `);
+        for (const w of wd.me?.workspaces || []) {
+          const pd = await gqlRequest(
+            gql`
+              query ($w: String!) {
+                projects(workspaceId: $w) {
+                  edges { node { id name } }
+                }
+              }
+            `,
+            { w: w.id }
+          );
+          for (const e of pd.projects?.edges || []) {
+            const p = e.node;
+            if (!q || p.name.toLowerCase().includes(q)) {
+              results.push({
+                id: `railway-project:${p.id}`,
+                title: `Railway project: ${p.name} (${w.name})`,
+                url: `https://railway.com/project/${p.id}`,
+              });
+            }
+          }
+        }
+      } catch {
+        // Railway search failure shouldn't drop GitHub matches.
+      }
+      if (githubToken) {
+        try {
+          const { data } = await octokit.repos.listForAuthenticatedUser({
+            per_page: 100,
+            sort: "updated",
+          });
+          for (const r of data) {
+            if (!q || r.full_name.toLowerCase().includes(q)) {
+              results.push({
+                id: `github-repo:${r.full_name}`,
+                title: `GitHub repo: ${r.full_name}${r.private ? " (private)" : ""}`,
+                url: r.html_url,
+              });
+            }
+          }
+        } catch {
+          // Ignore GitHub search failures.
+        }
+      }
+      return searchFetchResult({ results });
+    }
+  );
+
+  server.tool(
+    "fetch",
+    "Fetch full details for a single result id from the search tool (a Railway project or a GitHub repository). Present for ChatGPT connector compatibility.",
+    {
+      id: z
+        .string()
+        .describe(
+          "A result id from search, e.g. 'railway-project:<id>' or 'github-repo:<owner>/<name>'"
+        ),
+    },
+    async ({ id }) => {
+      try {
+        if (id.startsWith("railway-project:")) {
+          const projectId = id.slice("railway-project:".length);
+          const d = await gqlRequest(
+            gql`
+              query ($id: String!) {
+                project(id: $id) {
+                  id
+                  name
+                  description
+                  services { edges { node { name } } }
+                  environments { edges { node { name } } }
+                }
+              }
+            `,
+            { id: projectId }
+          );
+          const p = d.project;
+          if (!p) {
+            return searchFetchResult({ id, title: "Not found", text: `No Railway project for ${id}.`, url: "" });
+          }
+          const services = p.services?.edges?.map((e) => e.node.name) || [];
+          const envs = p.environments?.edges?.map((e) => e.node.name) || [];
+          return searchFetchResult({
+            id,
+            title: `Railway project: ${p.name}`,
+            text:
+              `Railway project "${p.name}" (${p.id}).\n` +
+              (p.description ? `Description: ${p.description}\n` : "") +
+              `Services: ${services.length ? services.join(", ") : "none"}.\n` +
+              `Environments: ${envs.length ? envs.join(", ") : "none"}.`,
+            url: `https://railway.com/project/${p.id}`,
+            metadata: { services: String(services.length), environments: String(envs.length) },
+          });
+        }
+        if (id.startsWith("github-repo:")) {
+          const [owner, repo] = id.slice("github-repo:".length).split("/");
+          const { data: r } = await octokit.repos.get({ owner, repo });
+          return searchFetchResult({
+            id,
+            title: r.full_name,
+            text:
+              `GitHub repository ${r.full_name}${r.private ? " (private)" : " (public)"}.\n` +
+              (r.description ? `Description: ${r.description}\n` : "") +
+              `Default branch: ${r.default_branch}. Language: ${r.language || "n/a"}.\n` +
+              `Stars: ${r.stargazers_count}. Open issues: ${r.open_issues_count}.\n` +
+              `Clone: ${r.clone_url}`,
+            url: r.html_url,
+            metadata: { private: String(r.private), defaultBranch: r.default_branch },
+          });
+        }
+        return searchFetchResult({
+          id,
+          title: "Unknown id",
+          text: `Don't know how to fetch '${id}'. Use an id returned by the search tool.`,
+          url: "",
+        });
+      } catch (error) {
+        return searchFetchResult({ id, title: "Error", text: `Failed to fetch ${id}: ${error.message}`, url: "" });
+      }
+    }
+  );
+
   return server;
 }
 
