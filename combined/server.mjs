@@ -2002,7 +2002,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
 
         return toolResponse(`Found ${branches.length} branch(es):\n\n${formatted}`);
       } catch (error) {
-        return toolResponse(`Failed to list branches: ${error.message}`);
+        return toolError("Failed to list branches", error);
       }
     }
   );
