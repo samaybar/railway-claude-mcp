@@ -1628,7 +1628,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `Use railway-list-deployments to check build progress.`
         );
       } catch (error) {
-        return toolResponse(`Failed to create service: ${error.message}`);
+        return toolError("Failed to create service", error);
       }
     }
   );
