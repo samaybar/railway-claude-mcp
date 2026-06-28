@@ -2326,7 +2326,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
 
         return toolResponse(`Found ${prs.length} pull request(s):\n\n${formatted}`);
       } catch (error) {
-        return toolResponse(`Failed to list PRs: ${error.message}`);
+        return toolError("Failed to list PRs", error);
       }
     }
   );
