@@ -1494,7 +1494,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           `Redeployment triggered for service. Check the dashboard for progress.`
         );
       } catch (error) {
-        return toolResponse(`Failed to redeploy: ${error.message}`);
+        return toolError("Failed to redeploy", error);
       }
     }
   );
