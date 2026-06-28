@@ -3472,7 +3472,7 @@ app.post("/mcp", checkAuth, async (req, res) => {
         jsonrpc: "2.0",
         error: {
           code: -32001,
-          message: "Railway session expired or missing. Reconnect this connector in Claude.",
+          message: "Railway session expired or missing. Reconnect this connector in your assistant's connector/settings menu, then try again.",
         },
         id: req.body?.id ?? null,
       });
