@@ -1369,7 +1369,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `Check the Railway dashboard for deployment progress.`
         );
       } catch (error) {
-        return toolResponse(`Failed to deploy template: ${error.message}`);
+        return toolError("Failed to deploy template", error);
       }
     }
   );
