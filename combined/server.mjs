@@ -1767,6 +1767,126 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     }
   );
 
+  // -- railway-domain-guide --
+  // Helps with custom domains without ever moving money. Two cases:
+  //   (a) user already owns a domain and wants to attach it → we can check
+  //       attach-availability via customDomainAvailable (a real, read-only query)
+  //       and walk them through it.
+  //   (b) user wants to BUY a new domain → Railway sells domains in-dashboard,
+  //       but the public API exposes no purchase mutation, so we deep-link to
+  //       railway.com/domains and let Railway handle search, price, and payment.
+  // Read-only + deep-link. Not in TOOL_GROUP → always available. No money moves
+  // here, so it is intentionally NOT in DESTRUCTIVE_TOOLS/CRITICAL_TOOLS.
+  server.tool(
+    "railway-domain-guide",
+    "Help the user get a custom domain (like example.com) onto a Railway service. Use when they ask to buy a domain, use their own domain, or put their app on a real domain instead of the *.up.railway.app one. If they already OWN a domain, pass it as `domain` and this checks whether it can be attached. To BUY a new domain, this returns Railway's domain-purchase link — Railway runs the search, shows the price, and takes payment (an AI agent cannot and should not charge for a domain; the purchase always happens on Railway). Note: a custom domain is a separate yearly charge from monthly usage.",
+    {
+      domain: z
+        .string()
+        .optional()
+        .describe("A domain the user already owns and wants to attach (e.g. app.example.com). Omit if they want to buy a new one."),
+      intent: z
+        .enum(["buy", "attach"])
+        .optional()
+        .describe("'buy' = purchase a new domain on Railway; 'attach' = connect a domain they already own. Inferred from `domain` if omitted."),
+    },
+    async ({ domain, intent }) => {
+      const buyUrl = "https://railway.com/domains";
+      const mode = intent || (domain ? "attach" : "buy");
+
+      // Attach flow: do the one real read this tool can do.
+      if (mode === "attach" && domain) {
+        try {
+          const d = await gqlRequest(
+            gql`
+              query ($domain: String!) {
+                customDomainAvailable(domain: $domain) {
+                  available
+                  message
+                }
+              }
+            `,
+            { domain }
+          );
+          const a = d.customDomainAvailable;
+          const status = a?.available
+            ? `**${domain}** looks available to attach to a Railway service.`
+            : `**${domain}** can't be attached right now${a?.message ? `: ${a.message}` : "."}`;
+          return toolResponse(
+            `${status}\n\n` +
+              `Note: this checks whether the domain can be *connected* to a service, not whether it's for sale — it assumes you already own ${domain}.\n\n` +
+              `To attach it: I can add it to your service, then Railway gives you a CNAME and a TXT verification record to add at your domain's DNS provider (registrar). Once both records are in place, Railway issues the SSL certificate automatically.\n\n` +
+              `Want me to attach **${domain}** to a specific service? Tell me the project and service and I'll set it up (you'll still add the DNS records at your registrar).\n\n` +
+              `Don't actually own ${domain} yet? You can buy a domain directly on Railway: ${buyUrl}`
+          );
+        } catch (error) {
+          return toolError("Failed to check domain availability", error);
+        }
+      }
+
+      // Buy flow: pure guidance + deep link. No purchase happens here.
+      return toolResponse(
+        `You can buy a custom domain directly on Railway — it searches across many TLDs, shows you the price, and configures DNS and SSL automatically once you purchase.\n\n` +
+          `**Buy a domain here:** ${buyUrl}\n` +
+          `(You can also do it inline from a service's Settings → Networking → Custom Domain, where the search suggests names as you type.)\n\n` +
+          `A few things to know before you buy:\n` +
+          `- Domains are billed **yearly**, separately from your monthly Railway usage.\n` +
+          `- Railway manages DNS and SSL for domains you buy there, so there's nothing to configure by hand.\n` +
+          `- New domains have a 60-day ICANN lock before they can be transferred to another registrar.\n\n` +
+          `I can't make the purchase for you — buying a domain spends real money, so that step happens on Railway with your payment method. Once you've bought it (or if you already own a domain elsewhere), tell me and I'll attach it to your service.`
+      );
+    }
+  );
+
+  // -- railway-plan-info --
+  // Informational only: explains the current plan context and the tiers, then
+  // deep-links to Railway billing for the actual upgrade. Deliberately does NOT
+  // perform a plan change — upgrading is a recurring financial commitment, and
+  // the public API exposes no subscription/billing mutation anyway. Tier pricing
+  // is intentionally NOT hardcoded (it drifts); we point at the live page. Not in
+  // TOOL_GROUP → always available; not destructive → no alert.
+  server.tool(
+    "railway-plan-info",
+    "Explain Railway's plans (Trial, Hobby, Pro) and how to upgrade, e.g. Trial→Hobby or Hobby→Pro. Use when the user asks to upgrade their plan, what plan they're on, or what a plan costs. This is informational and routes the user to Railway's billing page to actually change plans — an AI agent cannot and should not change a billing subscription (it's a recurring charge), and Railway's public API has no plan-change operation. For current prices, point the user to railway.com/pricing rather than guessing.",
+    {
+      workspaceId: z
+        .string()
+        .optional()
+        .describe("Optional workspace id to name in the response (from railway-list-workspaces)."),
+    },
+    async ({ workspaceId }) => {
+      const pricingUrl = "https://railway.com/pricing";
+      const billingUrl = "https://railway.com/account/billing";
+
+      // Try to name the workspace this would apply to (read-only, best-effort).
+      let whoLine = "";
+      try {
+        const d = await gqlRequest(gql`
+          query { me { workspaces { id name } } }
+        `);
+        const ws = d.me?.workspaces || [];
+        const match = workspaceId ? ws.find((w) => w.id === workspaceId) : null;
+        if (match) {
+          whoLine = `This would apply to your **${match.name}** workspace.\n\n`;
+        } else if (ws.length === 1) {
+          whoLine = `This would apply to your **${ws[0].name}** workspace.\n\n`;
+        }
+      } catch {
+        // Naming the workspace is a nicety; never fail the tool over it.
+      }
+
+      return toolResponse(
+        `${whoLine}Railway's plans, at a high level:\n\n` +
+          `- **Trial** — a free starting tier with limited usage/credit, meant for trying Railway out.\n` +
+          `- **Hobby** — a paid personal plan that lifts the trial limits and includes a monthly usage allowance; good for personal projects and side apps.\n` +
+          `- **Pro** — a higher tier with team features (more seats, higher limits, priority support), aimed at teams and production workloads.\n\n` +
+          `For the current prices and exactly what's included at each tier, see Railway's live pricing page (I don't want to quote numbers that may be out of date): ${pricingUrl}\n\n` +
+          `**To change your plan:** ${billingUrl}\n\n` +
+          `I can't upgrade the plan for you — a plan change is a recurring charge on your account, so it happens on Railway's billing page with your payment method, not through me. Once you've upgraded, the new limits apply automatically to what we build.`
+      );
+    }
+  );
+
   // -- volume tools (railway-create-volume, railway-list-volumes, railway-delete-volume) --
   registerVolumeTools(server, { gqlRequest, resolveEnvironmentId });
 
