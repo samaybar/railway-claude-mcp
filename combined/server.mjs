@@ -630,7 +630,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             ws.map((w) => `- **${w.name}** (${w.id})`).join("\n")
         );
       } catch (error) {
-        return toolResponse(`Failed to list workspaces: ${error.message}`);
+        return toolError("Failed to list workspaces", error);
       }
     }
   );
