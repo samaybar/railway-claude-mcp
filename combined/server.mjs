@@ -870,7 +870,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           `Found ${services.length} service(s):\n\n${formatted}`
         );
       } catch (error) {
-        return toolResponse(`Failed to list services: ${error.message}`);
+        return toolError("Failed to list services", error);
       }
     }
   );
