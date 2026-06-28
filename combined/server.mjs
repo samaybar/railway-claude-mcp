@@ -282,6 +282,7 @@ const DESTRUCTIVE_TOOLS = new Set([
   "railway-query-postgres",
   "railway-create-volume",
   "railway-delete-volume",
+  "github-merge-pull-request",
 ]);
 
 // Tools that get an extra-attention red color rather than orange.
