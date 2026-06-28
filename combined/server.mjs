@@ -282,6 +282,7 @@ const DESTRUCTIVE_TOOLS = new Set([
   "railway-query-postgres",
   "railway-create-volume",
   "railway-delete-volume",
+  "github-merge-pull-request",
 ]);
 
 // Tools that get an extra-attention red color rather than orange.
@@ -294,6 +295,7 @@ const CRITICAL_TOOLS = new Set([
   "railway-set-variables",
   "railway-list-variables",
   "railway-query-postgres",
+  "github-merge-pull-request",
 ]);
 
 const SESSION_ALERT_DEBOUNCE_MS = HOUR_MS;
@@ -344,6 +346,8 @@ function extractArgSummary(toolName, args = {}) {
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"} mount=${a.mountPath || "?"}`;
     case "railway-delete-volume":
       return `volume=${a.volumeId || "?"}`;
+    case "github-merge-pull-request":
+      return `repo=${a.owner || "?"}/${a.repo || "?"} PR#${a.pull_number ?? "?"}${a.merge_method ? ` (${a.merge_method})` : ""}`;
     default:
       return "";
   }
@@ -497,6 +501,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     "github-list-commits": "ghr", "github-get-diff": "ghr",
     "github-create-repo": "ghw", "github-create-or-update-file": "ghw", "github-patch-file": "ghw",
     "github-delete-file": "ghw", "github-create-branch": "ghw", "github-create-pull-request": "ghw",
+    "github-merge-pull-request": "ghw",
   };
   const allowedTool = (g) =>
     g == null
@@ -544,9 +549,9 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     }
   }
   const RECONNECT_MESSAGE =
-    "Your Railway login has expired. Reconnect this connector " +
-    "(in Claude: Settings → Connectors → reconnect; in ChatGPT: re-authorize " +
-    "the connector) and try again.";
+    "Your Railway login has expired. Reconnect this connector in your " +
+    "assistant's connector/settings menu (in Claude: Settings → Connectors; " +
+    "in ChatGPT: the connector's settings → re-authorize), then try again.";
 
   async function gqlRequest(query, variables) {
     try {
@@ -1144,7 +1149,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   // -- railway-generate-domain --
   server.tool(
     "railway-generate-domain",
-    "Generate a Railway domain for a service. environmentId defaults to the project's production environment. targetPort is optional — Railway will auto-detect from the running service if omitted.",
+    "Generate a Railway domain for a service. environmentId defaults to the project's production environment. IMPORTANT: leave targetPort UNSET unless the user explicitly tells you the port — Railway auto-detects the port the app actually listens on, and guessing wrong (e.g. assuming 3000 when the app binds 8080) produces a domain that returns a Railway error page. Only pass targetPort if a previous attempt failed and the logs confirmed the real port.",
     {
       projectId: z.string().describe("The project ID"),
       environmentId: z
@@ -1183,8 +1188,11 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
         );
 
         const domain = data.serviceDomainCreate?.domain;
+        const portNote = targetPort !== undefined
+          ? `\n\nNote: this domain was pinned to port ${targetPort}. If the page shows a Railway error, the app is probably listening on a different port — call railway-get-logs to find the real port (look for "listening on 0.0.0.0:<port>"), then generate a new domain with that port.`
+          : `\n\nIf the page shows a Railway error, the service may not be listening yet or is on an unexpected port — check railway-get-logs.`;
         return toolResponse(
-          `Domain generated: **${domain}**\n\nYour service will be available at https://${domain}`
+          `Domain generated: **${domain}**\n\nYour service will be available at https://${domain}${portNote}`
         );
       } catch (error) {
         return toolError("Failed to generate domain", error);
@@ -1793,7 +1801,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `1. **Install the app & pick repos:** ${installUrl}\n` +
             `2. **Authorize:** open ${d.verification_uri} and enter code **${d.user_code}**\n\n` +
             `I'll detect it automatically (within ~${mins} min). Run **github-status** to confirm. ` +
-            `Once connected, the GitHub tools activate — you may need to reconnect this connector in Claude for them to appear.`
+            `Once connected, the GitHub tools activate — you may need to reconnect this connector in your assistant's connector/settings menu for them to appear.`
         );
       } catch (e) {
         return toolResponse(`Failed to start GitHub connect: ${e.message}`);
@@ -2367,7 +2375,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   // -- github-create-pull-request --
   server.tool(
     "github-create-pull-request",
-    "Create a new pull request",
+    "Create a new pull request. Prefer this only when a change benefits from review or easy reversibility (risky edits, larger refactors, or when the user asked for a PR). For simple changes to an existing project — especially for a user who doesn't want to deal with GitHub — commit directly to the main branch with github-create-or-update-file instead, which goes live without a PR-and-merge round trip.",
     {
       owner: z.string().describe("Repository owner"),
       repo: z.string().describe("Repository name"),
@@ -2397,6 +2405,78 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
         );
       } catch (error) {
         return toolError("Failed to create PR", error);
+      }
+    }
+  );
+
+  // -- github-merge-pull-request --
+  // Closes the loop for users who never touch the GitHub UI: an agent can merge
+  // an open PR in-conversation instead of stranding the user at a "Merge" button
+  // they may not understand. This is a CRITICAL action — on an auto-deploying
+  // repo it ships straight to production with no further gate — so the tool's
+  // contract is that the agent MUST summarize the change in plain language and
+  // get the user's explicit go-ahead before calling it. It is also flagged in
+  // CRITICAL_TOOLS, so every merge fires a Discord alert to the operator.
+  server.tool(
+    "github-merge-pull-request",
+    "Merge an open pull request. Use this to finish a change for someone who doesn't want to use the GitHub website — it completes the PR in the conversation instead of sending them to click a button. IMPORTANT: a merge is hard to undo and, on a repo that auto-deploys, ships straight to production. Before calling this you MUST (1) briefly describe in plain language what the change does and what will go live, and (2) get the user's explicit confirmation to merge. Do not call it speculatively or as part of a multi-step plan without a clear yes. For simple edits to an existing project, prefer committing directly with github-create-or-update-file rather than opening and merging a PR at all.",
+    {
+      owner: z.string().describe("Repository owner"),
+      repo: z.string().describe("Repository name"),
+      pull_number: z.number().describe("Pull request number to merge"),
+      merge_method: z
+        .enum(["merge", "squash", "rebase"])
+        .optional()
+        .describe("How to merge (default: merge)"),
+      commit_title: z.string().optional().describe("Optional title for the merge commit"),
+      commit_message: z.string().optional().describe("Optional body for the merge commit"),
+    },
+    async ({ owner, repo, pull_number, merge_method, commit_title, commit_message }) => {
+      try {
+        // Check the PR is open and mergeable before attempting, so we can give a
+        // clear reason rather than a raw API error if it can't be merged.
+        const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number });
+        if (pr.state !== "open") {
+          return toolResponse(
+            `PR #${pull_number} is **${pr.state}**${pr.merged ? " (already merged)" : ""}, so there's nothing to merge.`
+          );
+        }
+        if (pr.mergeable === false) {
+          return toolResponse(
+            `PR #${pull_number} can't be merged right now — it likely has conflicts with ${pr.base.ref}. ` +
+              `Resolve the conflicts (or ask me to) and try again.`
+          );
+        }
+
+        const { data: result } = await octokit.pulls.merge({
+          owner,
+          repo,
+          pull_number,
+          merge_method: merge_method || "merge",
+          ...(commit_title ? { commit_title } : {}),
+          ...(commit_message ? { commit_message } : {}),
+        });
+
+        return toolResponse(
+          `Merged **#${pr.number} ${pr.title}** into \`${pr.base.ref}\`.\n\n` +
+            `Merge commit: ${result.sha?.slice(0, 7) || "?"}\n` +
+            `${result.message || "Pull request successfully merged."}\n\n` +
+            `If this repo deploys from \`${pr.base.ref}\`, the new version will go live shortly.`
+        );
+      } catch (error) {
+        // 405 = not mergeable; 409 = head moved since the mergeability check.
+        if (error.status === 405) {
+          return toolResponse(
+            `PR #${pull_number} isn't in a mergeable state (GitHub refused the merge). ` +
+              `It may have conflicts, be a draft, or be blocked by branch protection.`
+          );
+        }
+        if (error.status === 409) {
+          return toolResponse(
+            `PR #${pull_number} changed while merging (the branch moved). Re-check it and try again.`
+          );
+        }
+        return toolError("Failed to merge PR", error);
       }
     }
   );
@@ -3395,7 +3475,7 @@ app.post("/mcp", checkAuth, async (req, res) => {
         jsonrpc: "2.0",
         error: {
           code: -32001,
-          message: "Railway session expired or missing. Reconnect this connector in Claude.",
+          message: "Railway session expired or missing. Reconnect this connector in your assistant's connector/settings menu, then try again.",
         },
         id: req.body?.id ?? null,
       });
