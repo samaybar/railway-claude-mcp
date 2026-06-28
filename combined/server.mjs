@@ -1971,7 +1971,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             privacyNote
         );
       } catch (error) {
-        return toolResponse(`Failed to create repo: ${error.message}`);
+        return toolError("Failed to create repo", error);
       }
     }
   );
