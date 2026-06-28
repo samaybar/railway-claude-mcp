@@ -933,7 +933,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           `Found ${entries.length} variable(s):\n\n${formatted}${note}`
         );
       } catch (error) {
-        return toolResponse(`Failed to list variables: ${error.message}`);
+        return toolError("Failed to list variables", error);
       }
     }
   );
