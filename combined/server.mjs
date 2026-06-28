@@ -2098,7 +2098,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           `**${filePath}** (${data.size} bytes, SHA: ${data.sha})\n\n\`\`\`\n${content}\n\`\`\``
         );
       } catch (error) {
-        return toolResponse(`Failed to get file: ${error.message}`);
+        return toolError("Failed to get file", error);
       }
     }
   );
