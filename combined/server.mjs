@@ -2406,6 +2406,78 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     }
   );
 
+  // -- github-merge-pull-request --
+  // Closes the loop for users who never touch the GitHub UI: an agent can merge
+  // an open PR in-conversation instead of stranding the user at a "Merge" button
+  // they may not understand. This is a CRITICAL action — on an auto-deploying
+  // repo it ships straight to production with no further gate — so the tool's
+  // contract is that the agent MUST summarize the change in plain language and
+  // get the user's explicit go-ahead before calling it. It is also flagged in
+  // CRITICAL_TOOLS, so every merge fires a Discord alert to the operator.
+  server.tool(
+    "github-merge-pull-request",
+    "Merge an open pull request. Use this to finish a change for someone who doesn't want to use the GitHub website — it completes the PR in the conversation instead of sending them to click a button. IMPORTANT: a merge is hard to undo and, on a repo that auto-deploys, ships straight to production. Before calling this you MUST (1) briefly describe in plain language what the change does and what will go live, and (2) get the user's explicit confirmation to merge. Do not call it speculatively or as part of a multi-step plan without a clear yes. For simple edits to an existing project, prefer committing directly with github-create-or-update-file rather than opening and merging a PR at all.",
+    {
+      owner: z.string().describe("Repository owner"),
+      repo: z.string().describe("Repository name"),
+      pull_number: z.number().describe("Pull request number to merge"),
+      merge_method: z
+        .enum(["merge", "squash", "rebase"])
+        .optional()
+        .describe("How to merge (default: merge)"),
+      commit_title: z.string().optional().describe("Optional title for the merge commit"),
+      commit_message: z.string().optional().describe("Optional body for the merge commit"),
+    },
+    async ({ owner, repo, pull_number, merge_method, commit_title, commit_message }) => {
+      try {
+        // Check the PR is open and mergeable before attempting, so we can give a
+        // clear reason rather than a raw API error if it can't be merged.
+        const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number });
+        if (pr.state !== "open") {
+          return toolResponse(
+            `PR #${pull_number} is **${pr.state}**${pr.merged ? " (already merged)" : ""}, so there's nothing to merge.`
+          );
+        }
+        if (pr.mergeable === false) {
+          return toolResponse(
+            `PR #${pull_number} can't be merged right now — it likely has conflicts with ${pr.base.ref}. ` +
+              `Resolve the conflicts (or ask me to) and try again.`
+          );
+        }
+
+        const { data: result } = await octokit.pulls.merge({
+          owner,
+          repo,
+          pull_number,
+          merge_method: merge_method || "merge",
+          ...(commit_title ? { commit_title } : {}),
+          ...(commit_message ? { commit_message } : {}),
+        });
+
+        return toolResponse(
+          `Merged **#${pr.number} ${pr.title}** into \`${pr.base.ref}\`.\n\n` +
+            `Merge commit: ${result.sha?.slice(0, 7) || "?"}\n` +
+            `${result.message || "Pull request successfully merged."}\n\n` +
+            `If this repo deploys from \`${pr.base.ref}\`, the new version will go live shortly.`
+        );
+      } catch (error) {
+        // 405 = not mergeable; 409 = head moved since the mergeability check.
+        if (error.status === 405) {
+          return toolResponse(
+            `PR #${pull_number} isn't in a mergeable state (GitHub refused the merge). ` +
+              `It may have conflicts, be a draft, or be blocked by branch protection.`
+          );
+        }
+        if (error.status === 409) {
+          return toolResponse(
+            `PR #${pull_number} changed while merging (the branch moved). Re-check it and try again.`
+          );
+        }
+        return toolError("Failed to merge PR", error);
+      }
+    }
+  );
+
   // -- github-search-code --
   server.tool(
     "github-search-code",
