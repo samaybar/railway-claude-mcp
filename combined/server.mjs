@@ -463,7 +463,7 @@ function maskValue(value) {
 // `railwayToken` is the bearer used for every Railway API call in this request:
 // either the static RAILWAY_API_TOKEN override or the connecting user's
 // Login-with-Railway access token (resolved + refreshed per request).
-function createRailwayMcpServer(railwayToken, githubToken) {
+function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   const server = new McpServer(
     {
       name: "railway-github-mcp",
