@@ -2359,7 +2359,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `**Description:**\n${pr.body || "No description"}`
         );
       } catch (error) {
-        return toolResponse(`Failed to get PR: ${error.message}`);
+        return toolError("Failed to get PR", error);
       }
     }
   );
