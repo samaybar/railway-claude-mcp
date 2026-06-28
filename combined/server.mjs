@@ -1798,7 +1798,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
             `1. **Install the app & pick repos:** ${installUrl}\n` +
             `2. **Authorize:** open ${d.verification_uri} and enter code **${d.user_code}**\n\n` +
             `I'll detect it automatically (within ~${mins} min). Run **github-status** to confirm. ` +
-            `Once connected, the GitHub tools activate — you may need to reconnect this connector in Claude for them to appear.`
+            `Once connected, the GitHub tools activate — you may need to reconnect this connector in your assistant's connector/settings menu for them to appear.`
         );
       } catch (e) {
         return toolResponse(`Failed to start GitHub connect: ${e.message}`);
