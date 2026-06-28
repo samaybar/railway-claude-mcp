@@ -514,18 +514,61 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   server.tool = (name, ...rest) =>
     allowedTool(TOOL_GROUP[name]) ? _registerTool(name, ...rest) : undefined;
 
-  const railwayClient = new GraphQLClient(
+  // Mutable bearer: a long MCP session can outlive the access token, so we may
+  // swap in a refreshed token mid-session and rebuild the client.
+  let currentRailwayToken = railwayToken;
+  let railwayClient = new GraphQLClient(
     "https://backboard.railway.com/graphql/v2",
     {
       headers: {
-        Authorization: `Bearer ${railwayToken}`,
+        Authorization: `Bearer ${currentRailwayToken}`,
         "x-source": "railway-mcp-server-remote",
       },
     }
   );
 
+  // A logged-out/expired Railway session surfaces as a GraphQL "Not Authorized"
+  // error rather than an HTTP 401, so match on the message.
+  function isNotAuthorized(err) {
+    const m = String(err?.message || err || "");
+    return /not authorized/i.test(m);
+  }
+
+  // Raised when a Railway call can't be authorized even after a refresh attempt.
+  // Tools catch this and return a clear, actionable reconnect message instead of
+  // leaking a raw GraphQL error (which renders as an empty/confusing response).
+  class RailwayAuthError extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "RailwayAuthError";
+    }
+  }
+  const RECONNECT_MESSAGE =
+    "Your Railway login has expired. Reconnect this connector " +
+    "(in Claude: Settings → Connectors → reconnect; in ChatGPT: re-authorize " +
+    "the connector) and try again.";
+
   async function gqlRequest(query, variables) {
-    return railwayClient.request(query, variables);
+    try {
+      return await railwayClient.request(query, variables);
+    } catch (err) {
+      // Static-token deployments can't refresh; a stale override is a config
+      // problem for the operator, not something the end user can reconnect.
+      if (!isNotAuthorized(err) || RAILWAY_API_TOKEN || !mcpToken) throw err;
+      const fresh = await forceRailwayRefresh(mcpToken);
+      if (!fresh) throw new RailwayAuthError(RECONNECT_MESSAGE);
+      currentRailwayToken = fresh;
+      railwayClient = new GraphQLClient(
+        "https://backboard.railway.com/graphql/v2",
+        {
+          headers: {
+            Authorization: `Bearer ${currentRailwayToken}`,
+            "x-source": "railway-mcp-server-remote",
+          },
+        }
+      );
+      return await railwayClient.request(query, variables);
+    }
   }
 
   // Resolve an environment ID for a project: return it as-is if given,
