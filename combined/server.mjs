@@ -979,7 +979,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           `Successfully set ${keys.length} variable(s): ${keys.join(", ")}`
         );
       } catch (error) {
-        return toolResponse(`Failed to set variables: ${error.message}`);
+        return toolError("Failed to set variables", error);
       }
     }
   );
