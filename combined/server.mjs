@@ -549,9 +549,9 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     }
   }
   const RECONNECT_MESSAGE =
-    "Your Railway login has expired. Reconnect this connector " +
-    "(in Claude: Settings → Connectors → reconnect; in ChatGPT: re-authorize " +
-    "the connector) and try again.";
+    "Your Railway login has expired. Reconnect this connector in your " +
+    "assistant's connector/settings menu (in Claude: Settings → Connectors; " +
+    "in ChatGPT: the connector's settings → re-authorize), then try again.";
 
   async function gqlRequest(query, variables) {
     try {
