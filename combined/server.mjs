@@ -1653,7 +1653,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
 
         return toolResponse(`Service ${serviceId} deleted successfully.`);
       } catch (error) {
-        return toolResponse(`Failed to delete service: ${error.message}`);
+        return toolError("Failed to delete service", error);
       }
     }
   );
