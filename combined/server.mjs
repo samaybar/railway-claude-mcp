@@ -2805,14 +2805,36 @@ async function resolveRailwayAccessToken(mcpToken) {
   const rw = entry?.railway;
   if (!rw) return null;
   if (Date.now() < rw.expiresAt - 60 * 1000) return rw.accessToken;
-  if (!rw.refreshToken) return rw.accessToken;
+  // Access token is stale. We must refresh; if we can't, the token is dead and
+  // returning it anyway just produces "Not Authorized" on every downstream call.
+  // Return null instead so the caller surfaces a clear "reconnect" message.
+  if (!rw.refreshToken) return null;
   const refreshed = await railwayRefresh(rw.refreshToken);
   if (refreshed?.access_token) {
     rw.accessToken = refreshed.access_token;
     if (refreshed.refresh_token) rw.refreshToken = refreshed.refresh_token;
     rw.expiresAt = Date.now() + (refreshed.expires_in || 3600) * 1000;
     saveStore();
+    return rw.accessToken;
   }
+  // Refresh failed (refresh token expired or revoked). Treat as logged out.
+  return null;
+}
+
+// Force a Railway token refresh for a session regardless of expiry clock, used
+// when a live API call comes back Not Authorized mid-session. Returns the new
+// access token, or null if the session can't be refreshed (caller should tell
+// the user to reconnect). Skipped entirely when a static override is in play.
+async function forceRailwayRefresh(mcpToken) {
+  if (RAILWAY_API_TOKEN) return null;
+  const rw = accessTokens.get(mcpToken)?.railway;
+  if (!rw?.refreshToken) return null;
+  const refreshed = await railwayRefresh(rw.refreshToken);
+  if (!refreshed?.access_token) return null;
+  rw.accessToken = refreshed.access_token;
+  if (refreshed.refresh_token) rw.refreshToken = refreshed.refresh_token;
+  rw.expiresAt = Date.now() + (refreshed.expires_in || 3600) * 1000;
+  saveStore();
   return rw.accessToken;
 }
 
