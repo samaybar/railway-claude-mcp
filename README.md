@@ -1,69 +1,67 @@
-# Build from Claude — Railway + GitHub MCP servers
+# Build from Claude (or ChatGPT) — Railway + GitHub MCP
 
-Two small, self-hosted MCP servers that let you build and ship real apps on Railway from a chat interface. Connect them to Claude (or any MCP-capable agent) and you can write code, commit it to GitHub, and deploy it to Railway without leaving the conversation.
+A single, self-hosted MCP server that lets you build and ship real apps on Railway straight from a chat interface. Connect it to Claude or ChatGPT (or any MCP-capable agent) and you can write code, commit it to GitHub, and deploy it to Railway without leaving the conversation.
 
-- **`railway-mcp/`** — manage Railway: projects, services, deploys, variables, domains, logs, Postgres, volumes.
-- **`github-mcp/`** — manage GitHub: repos, files, branches, pull requests, search, commits.
+One server, one connector, both toolsets:
 
-Together they're the full loop: GitHub MCP writes the code, Railway MCP ships it.
+- **Railway** — workspaces, projects, services, deploys, variables, domains, logs, Postgres, volumes.
+- **GitHub** — repos, files, branches, pull requests (including merge), code search, commits.
+
+Together they're the full loop: GitHub writes the code, Railway ships it.
 
 ## How it works
 
 ```
-  Claude (or any MCP agent)
+  Claude / ChatGPT (or any MCP agent)
         │  remote MCP over HTTPS, OAuth 2.1
         ▼
-  your self-hosted servers on Railway
-        │
-        ├── railway-mcp ──▶ Railway API   (build & deploy)
-        └── github-mcp  ──▶ GitHub API    (read & write code)
+  your self-hosted "combined" server on Railway
+        ├──▶ Railway API   (build & deploy, as the logged-in user)
+        └──▶ GitHub API    (read & write code)
 ```
 
-You deploy your own copies with your own credentials. Nothing is shared or multi-tenant, and the servers aren't Claude-specific — any client that speaks remote MCP with OAuth can use them.
+You deploy your own copy with your own account. Nothing is shared or multi-tenant, and it isn't Claude-specific — any client that speaks remote MCP with OAuth can use it.
 
 ## Deploy
 
-Each folder is an independent Railway service with its own `railway.toml`. Deploy them as two services:
+The product is the [`combined/`](combined) server — one Railway service exposing both toolsets behind a single `/mcp` endpoint and a single Login-with-Railway flow.
 
 1. **Create a project** in Railway.
-2. **Add the Railway server:** New Service → Deploy from GitHub repo → this repo → set **Root Directory** to `railway-mcp`. No variables required — it authenticates you via Login with Railway and acts as your account.
-3. **Add the GitHub server:** New Service → same repo → set **Root Directory** to `github-mcp`. Set `GITHUB_TOKEN` (the only required variable).
-4. Each service gets a public domain and a `/app/data` volume (declared in its `railway.toml`) where OAuth state persists across redeploys.
+2. **Add the service:** New Service → Deploy from GitHub repo → this repo → set **Root Directory** to `combined`.
+3. It needs no secrets to start: it authenticates you via **Login with Railway** and acts as your account. It auto-derives its public URL and persists OAuth + GitHub state on a `/app/data` volume.
+4. Open the service's public URL in a browser — the landing page walks you (or a newcomer) through connecting it.
 
-Per-service variables and token instructions are in [`railway-mcp/README.md`](railway-mcp/README.md) and [`github-mcp/README.md`](github-mcp/README.md).
+Optional service variables are documented in [`combined/README.md`](combined/README.md) and [`combined/.env.example`](combined/.env.example) — notably `RAILWAY_MODE` / `GITHUB_MODE` (capability scoping) and `DISCORD_WEBHOOK_URL` (alerting).
 
-> **One-click is the next step.** This repo is the source; turning it into a single published Railway template (one click deploys both services with variable prompts) is a follow-up done in Railway's template composer. Until then, the two-service flow above is the path.
+## Connect to your assistant
 
-## Connect to Claude
-
-Custom connectors are available on Claude's paid plans (Pro/Max/Team/Enterprise). For each server:
+Custom MCP connectors require a paid plan (Claude Pro/Max/Team/Enterprise; ChatGPT Business/Enterprise for write actions — Plus/Pro are read-only even in developer mode).
 
 1. Copy the service's public URL from Railway and append `/mcp`.
-2. In Claude: **Settings → Connectors → Add custom connector** → paste the `/mcp` URL → save.
-3. Click **Connect**. Claude sends you to **Login with Railway** — sign in (and, for the Railway server, consent to the workspace scope). The first person to connect locks the server to themselves.
-4. The tools appear in Claude. Add both connectors to get the full build-and-ship loop.
+2. **Claude:** Settings → Connectors → Add custom connector → paste the `/mcp` URL → Connect → **Log in with Railway**.
+   **ChatGPT:** enable developer mode, add the connector by the same `/mcp` URL, and authorize.
+3. The first person to connect locks the server to themselves (or set `ALLOWED_RAILWAY_EMAILS`).
+4. **Connect GitHub** (optional, anytime): ask the assistant to run `github-connect`. It walks you through installing the GitHub App and picking repos via device flow — no token to paste. A static `GITHUB_TOKEN` is an alternate fallback.
 
 ## Security model
 
-- **Login with Railway, locked to you.** Each server authenticates the human via Railway's OIDC and only allows its owner (the first verified login) or the emails in `ALLOWED_RAILWAY_EMAILS`. Anyone else who finds the URL is denied.
-- **No token to paste (Railway server).** By default it calls the Railway API *as the logged-in user* via their OAuth session, scoped to the workspace they consent to. `RAILWAY_API_TOKEN` is an optional override. (The GitHub server still uses your `GITHUB_TOKEN`, since Railway login can't issue GitHub credentials.)
-- **OAuth everywhere.** Claude ↔ server is OAuth 2.1 (PKCE + dynamic client registration, RFC 8414/9728 metadata); the server ↔ Railway leg also uses PKCE.
-- **Secrets stay out of the chat.** `list-variables` masks values by default; raw values require an explicit `reveal: true`.
-- **Optional alerting.** Set `DISCORD_WEBHOOK_URL` + `MCP_ACTIVITY_ALERTS=true` to get a ping on session start and on destructive/critical tool calls.
-- Keep the deployments private and only connect clients you trust.
+- **Login with Railway, locked to you.** Authenticates the human via Railway's OIDC and only allows its owner (first verified login) or the emails in `ALLOWED_RAILWAY_EMAILS`. Anyone else who finds the URL is denied.
+- **No token to paste.** It calls the Railway API *as the logged-in user* via their OAuth session, scoped to the workspace they consent to. `RAILWAY_API_TOKEN` is an advanced, unattended-only override. GitHub uses the `github-connect` device flow (or an optional `GITHUB_TOKEN`).
+- **OAuth everywhere.** Assistant ↔ server is OAuth 2.1 (PKCE + dynamic client registration, RFC 8414/9728 metadata); the server ↔ Railway leg also uses PKCE, with mid-session token refresh.
+- **Secrets stay out of the chat.** `railway-list-variables` *always* masks values and links to the Railway dashboard to view/edit them. `railway-query-postgres` resolves the database connection string server-side from `projectId`/`serviceId`, so the DSN never enters the transcript.
+- **Least privilege.** `RAILWAY_MODE` (`read` / `deploy` / `full`) and `GITHUB_MODE` (`off` / `read` / `write`) gate which tools are even registered. Tools carry MCP `readOnlyHint`/`destructiveHint` annotations.
+- **Confirm-before-ship.** Destructive actions (delete, merge-to-prod) require the assistant to summarize and get explicit confirmation, and fire an optional Discord alert (`DISCORD_WEBHOOK_URL` + `MCP_ACTIVITY_ALERTS=true`).
+- Keep the deployment private and only connect clients you trust.
 
 ## Repository layout
 
 ```
-railway-mcp/      Railway MCP server (Node + Express + MCP SDK)
-  server.mjs
-  tools/volumes.mjs
-  railway.toml    service config: start cmd, healthcheck, volume, PUBLIC_URL
-  .env.example
-github-mcp/       GitHub MCP server (Node + Express + MCP SDK + Octokit)
-  server.mjs
-  railway.toml
-  .env.example
+combined/                 the server (Node + Express + MCP SDK + Octokit + pg)
+  server.mjs              Railway + GitHub tools, OAuth broker, landing page
+  tools/volumes.mjs       volume tools
+  railway.toml            service config: start cmd, healthcheck, volume
+  README.md, .env.example
+icon.png / icon.svg       connector icon
 ```
 
 ## License

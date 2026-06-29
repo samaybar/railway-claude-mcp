@@ -265,17 +265,16 @@ setInterval(() => {
 // Gated on MCP_ACTIVITY_ALERTS being truthy AND DISCORD_WEBHOOK_URL being set.
 
 // Tools flagged here generate a Discord alert on invocation. Most are
-// state-changing. Two exceptions are listed here even though they only *read*:
+// state-changing. One exception is listed even though it only *reads*:
 //   - railway-query-postgres: SQL is unconstrained; can be read OR write, always alert
-//   - railway-list-variables: returns plaintext env var values (including secrets);
-//     effectively a secrets exfiltration tool, always alert
+// (railway-list-variables is NOT here: it always masks values, so it no longer
+// exposes secrets and doesn't warrant an alert.)
 const DESTRUCTIVE_TOOLS = new Set([
   "railway-create-project",
   "railway-create-environment",
   "railway-create-service-from-github",
   "railway-delete-service",
   "railway-set-variables",
-  "railway-list-variables",
   "railway-redeploy-service",
   "railway-deploy-template",
   "railway-generate-domain",
@@ -285,15 +284,13 @@ const DESTRUCTIVE_TOOLS = new Set([
   "github-merge-pull-request",
 ]);
 
-// Tools that get an extra-attention red color rather than orange.
-// railway-list-variables is critical because anyone calling it with reveal=true can
-// dump every secret on the service in one call (API keys, DB connection
-// strings, etc). Values are masked by default.
+// Tools that get an extra-attention red color rather than orange — the ones
+// that delete data, overwrite all of a service's variables, run arbitrary SQL,
+// or ship code to production.
 const CRITICAL_TOOLS = new Set([
   "railway-delete-service",
   "railway-delete-volume",
   "railway-set-variables",
-  "railway-list-variables",
   "railway-query-postgres",
   "github-merge-pull-request",
 ]);
@@ -338,9 +335,12 @@ function extractArgSummary(toolName, args = {}) {
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"}${a.targetPort ? ` port=${a.targetPort}` : ""}`;
     case "railway-query-postgres": {
       // Show the first line of the SQL so you can eyeball SELECT vs. DROP
-      // without the full payload bleeding into chat.
+      // without the full payload bleeding into chat. Note the target form too.
       const sql = (a.sql || "").replace(/\s+/g, " ").trim();
-      return `sql=${truncate(sql, 160)}`;
+      const target = a.connectionString
+        ? "raw-connectionString"
+        : `project=${a.projectId || "?"} service=${a.serviceId || "?"}`;
+      return `${target} sql=${truncate(sql, 140)}`;
     }
     case "railway-create-volume":
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"} mount=${a.mountPath || "?"}`;
@@ -515,9 +515,80 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
       : g === "ghw"
       ? githubCan.write
       : true;
+  // MCP tool annotations (readOnlyHint/destructiveHint/idempotentHint/openWorldHint).
+  // Single source of truth — auto-attached at registration by the wrapper below,
+  // so individual tool definitions don't repeat them and volumes.mjs is covered too.
+  // Clients (ChatGPT in particular) use readOnlyHint to gate read-only connectors.
+  const TOOL_ANNOTATIONS = {
+    // Railway — read-only
+    "railway-list-workspaces": { title: "List workspaces", readOnlyHint: true, openWorldHint: true },
+    "railway-list-projects": { title: "List projects", readOnlyHint: true, openWorldHint: true },
+    "railway-get-project": { title: "Get project", readOnlyHint: true, openWorldHint: true },
+    "railway-list-services": { title: "List services", readOnlyHint: true, openWorldHint: true },
+    "railway-list-variables": { title: "List variables", readOnlyHint: true, openWorldHint: true },
+    "railway-get-logs": { title: "Get logs", readOnlyHint: true, openWorldHint: true },
+    "railway-list-deployments": { title: "List deployments", readOnlyHint: true, openWorldHint: true },
+    "railway-list-domains": { title: "List domains", readOnlyHint: true, openWorldHint: true },
+    "railway-list-volumes": { title: "List volumes", readOnlyHint: true, openWorldHint: true },
+    "railway-status": { title: "Railway status", readOnlyHint: true, openWorldHint: true },
+    // Railway — non-destructive writes
+    "railway-create-project": { title: "Create project", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-create-environment": { title: "Create environment", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-set-variables": { title: "Set variables", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    "railway-generate-domain": { title: "Generate domain", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-deploy-template": { title: "Deploy template", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-redeploy-service": { title: "Redeploy service", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-create-service-from-github": { title: "Create service from GitHub", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-create-volume": { title: "Create volume", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    // Railway — destructive
+    "railway-delete-service": { title: "Delete service", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    "railway-delete-volume": { title: "Delete volume", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    "railway-query-postgres": { title: "Query Postgres", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    // Connector meta + guidance (read-only / informational)
+    "update-this-connector": { title: "Update this connector", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-github-access": { title: "How to grant Railway GitHub access", readOnlyHint: true, openWorldHint: false },
+    "railway-domain-guide": { title: "Domain guide", readOnlyHint: true, openWorldHint: false },
+    "railway-plan-info": { title: "Plan info", readOnlyHint: true, openWorldHint: true },
+    // GitHub — connection + read-only
+    "github-connect": { title: "Connect GitHub", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "github-status": { title: "GitHub status", readOnlyHint: true, openWorldHint: true },
+    "github-check-connection": { title: "Check connection", readOnlyHint: true, openWorldHint: true },
+    "github-list-repos": { title: "List repositories", readOnlyHint: true, openWorldHint: true },
+    "github-get-repo": { title: "Get repository", readOnlyHint: true, openWorldHint: true },
+    "github-list-branches": { title: "List branches", readOnlyHint: true, openWorldHint: true },
+    "github-get-file": { title: "Get file", readOnlyHint: true, openWorldHint: true },
+    "github-list-pull-requests": { title: "List pull requests", readOnlyHint: true, openWorldHint: true },
+    "github-get-pull-request": { title: "Get pull request", readOnlyHint: true, openWorldHint: true },
+    "github-search-code": { title: "Search code", readOnlyHint: true, openWorldHint: true },
+    "github-list-commits": { title: "List commits", readOnlyHint: true, openWorldHint: true },
+    "github-get-diff": { title: "Get diff", readOnlyHint: true, openWorldHint: true },
+    // GitHub — writes
+    "github-create-repo": { title: "Create repository", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "github-create-branch": { title: "Create branch", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "github-create-or-update-file": { title: "Create or update file", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    "github-patch-file": { title: "Patch file", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    "github-delete-file": { title: "Delete file", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    "github-create-pull-request": { title: "Create pull request", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "github-merge-pull-request": { title: "Merge pull request", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    // ChatGPT compatibility (read-only)
+    "search": { title: "Search", readOnlyHint: true, openWorldHint: true },
+    "fetch": { title: "Fetch", readOnlyHint: true, openWorldHint: true },
+  };
+
   const _registerTool = server.tool.bind(server);
-  server.tool = (name, ...rest) =>
-    allowedTool(TOOL_GROUP[name]) ? _registerTool(name, ...rest) : undefined;
+  server.tool = (name, ...rest) => {
+    if (!allowedTool(TOOL_GROUP[name])) return undefined;
+    const ann = TOOL_ANNOTATIONS[name];
+    const last = rest[rest.length - 1];
+    const prev = rest[rest.length - 2];
+    // Inject annotations as (..., paramsSchema, annotations, cb). Only when the
+    // arg before the callback is the params-schema object, so a description-only
+    // or schema-less registration is never misread.
+    if (ann && typeof last === "function" && prev && typeof prev === "object") {
+      return _registerTool(name, ...rest.slice(0, -1), ann, last);
+    }
+    return _registerTool(name, ...rest);
+  };
 
   // Mutable bearer: a long MCP session can outlive the access token, so we may
   // swap in a refreshed token mid-session and rebuild the client.
@@ -883,7 +954,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   // -- railway-list-variables --
   server.tool(
     "railway-list-variables",
-    "List environment variables for a service. Values are MASKED by default so secrets don't leak into the conversation; only the variable names and value lengths are shown. Pass reveal=true to return raw values (use sparingly, and never for a service you don't own). environmentId defaults to the project's production environment.",
+    "List environment variables for a service. Values are always MASKED — only variable names and value lengths are shown, never the secret values themselves. To view or edit real values, use the Railway variables-tab link included in the response. environmentId defaults to the project's production environment.",
     {
       projectId: z.string().describe("The project ID"),
       environmentId: z
@@ -893,14 +964,8 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           "The environment ID (defaults to the project's production environment)"
         ),
       serviceId: z.string().describe("The service ID"),
-      reveal: z
-        .boolean()
-        .optional()
-        .describe(
-          "Return raw, unmasked values. WARNING: this prints secret values (API keys, DB URLs) into the chat transcript. Defaults to false."
-        ),
     },
-    async ({ projectId, environmentId, serviceId, reveal }) => {
+    async ({ projectId, environmentId, serviceId }) => {
       try {
         const envId = await resolveEnvironmentId(projectId, environmentId);
         const data = await gqlRequest(
@@ -919,23 +984,24 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
         const vars = data.variables || {};
         const entries = Object.entries(vars);
 
+        // Deep link to the service's variables tab, where real values can be
+        // viewed/edited in an authenticated context (never in the transcript).
+        const dashboardUrl = `https://railway.com/project/${projectId}/service/${serviceId}/variables`;
+
         if (entries.length === 0) {
-          return toolResponse("No variables found.");
+          return toolResponse(
+            `No variables returned for this service.\n\n` +
+              `Note: sealed variables don't appear here. View or edit values in the Railway dashboard:\n${dashboardUrl}`
+          );
         }
 
         const formatted = entries
-          .map(
-            ([key, value]) =>
-              `- **${key}** = \`${reveal ? value : maskValue(value)}\``
-          )
+          .map(([key, value]) => `- **${key}** = \`${maskValue(value)}\``)
           .join("\n");
 
-        const note = reveal
-          ? ""
-          : "\n\n_Values are masked. Call again with `reveal: true` to see raw values (this exposes secrets in the chat)._";
-
         return toolResponse(
-          `Found ${entries.length} variable(s):\n\n${formatted}${note}`
+          `Found ${entries.length} variable(s) (values masked):\n\n${formatted}\n\n` +
+            `_Values are masked and never shown here. To view or edit real values, open the Railway variables tab:_\n${dashboardUrl}`
         );
       } catch (error) {
         return toolError("Failed to list variables", error);
@@ -1196,6 +1262,97 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
         );
       } catch (error) {
         return toolError("Failed to generate domain", error);
+      }
+    }
+  );
+
+  // -- railway-list-domains --
+  server.tool(
+    "railway-list-domains",
+    "List the domains attached to a service: both Railway-provided domains (the *.up.railway.app hosts) and any custom domains. environmentId defaults to the project's production environment. Read-only counterpart to railway-generate-domain — use it to find a service's public URL.",
+    {
+      projectId: z.string().describe("The project ID"),
+      environmentId: z
+        .string()
+        .optional()
+        .describe(
+          "The environment ID (defaults to the project's production environment)"
+        ),
+      serviceId: z.string().describe("The service ID"),
+    },
+    async ({ projectId, environmentId, serviceId }) => {
+      try {
+        const envId = await resolveEnvironmentId(projectId, environmentId);
+        const data = await gqlRequest(
+          gql`
+            query ($projectId: String!, $environmentId: String!, $serviceId: String!) {
+              domains(
+                projectId: $projectId
+                environmentId: $environmentId
+                serviceId: $serviceId
+              ) {
+                serviceDomains {
+                  id
+                  domain
+                  targetPort
+                }
+                customDomains {
+                  id
+                  domain
+                  targetPort
+                  status {
+                    dnsRecords {
+                      hostlabel
+                      recordType
+                      requiredValue
+                      currentValue
+                      status
+                    }
+                  }
+                }
+              }
+            }
+          `,
+          { projectId, environmentId: envId, serviceId }
+        );
+
+        const svc = data.domains?.serviceDomains || [];
+        const custom = data.domains?.customDomains || [];
+
+        if (svc.length === 0 && custom.length === 0) {
+          return toolResponse(
+            "No domains found for this service. Use railway-generate-domain to create one."
+          );
+        }
+
+        const fmtPort = (p) => (p ? ` → port ${p}` : "");
+        const lines = [];
+        if (svc.length) {
+          lines.push("**Railway domains:**");
+          for (const d of svc) {
+            lines.push(`- https://${d.domain}${fmtPort(d.targetPort)}`);
+          }
+        }
+        if (custom.length) {
+          if (lines.length) lines.push("");
+          lines.push("**Custom domains:**");
+          for (const d of custom) {
+            const records = d.status?.dnsRecords || [];
+            const ok =
+              records.length > 0 &&
+              records.every((r) => (r.status || "").toUpperCase() === "VALID");
+            const state = records.length
+              ? ok
+                ? "verified"
+                : "pending DNS"
+              : "no DNS records";
+            lines.push(`- https://${d.domain}${fmtPort(d.targetPort)} (${state})`);
+          }
+        }
+
+        return toolResponse(lines.join("\n"));
+      } catch (error) {
+        return toolError("Failed to list domains", error);
       }
     }
   );
@@ -1669,34 +1826,93 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   // -- railway-query-postgres --
   server.tool(
     "railway-query-postgres",
-    "Execute a SQL query against a PostgreSQL database",
+    "Execute a SQL query against a PostgreSQL database. Preferred: pass projectId + serviceId (of the Postgres service) and the server resolves the connection string itself — the DSN never enters the chat. Alternatively pass a raw connectionString as a fallback for databases not hosted on Railway (note: a raw connection string you pass here will appear in the transcript). environmentId defaults to the project's production environment.",
     {
+      projectId: z
+        .string()
+        .optional()
+        .describe("Project ID of the Railway Postgres service (preferred over connectionString)"),
+      environmentId: z
+        .string()
+        .optional()
+        .describe(
+          "The environment ID (defaults to the project's production environment). Only used with projectId/serviceId."
+        ),
+      serviceId: z
+        .string()
+        .optional()
+        .describe("Service ID of the Railway Postgres service (preferred over connectionString)"),
       connectionString: z
         .string()
+        .optional()
         .describe(
-          "PostgreSQL connection string (e.g., postgresql://user:pass@host:port/db)"
+          "Fallback: a raw PostgreSQL connection string (e.g., postgresql://user:pass@host:port/db). Use only for non-Railway databases; this value appears in the transcript. Prefer projectId + serviceId."
         ),
       sql: z.string().describe("SQL query to execute"),
     },
-    async ({ connectionString, sql }) => {
-      const client = new pg.Client({ connectionString });
+    async ({ projectId, environmentId, serviceId, connectionString, sql }) => {
       try {
-        await client.connect();
-        const result = await client.query(sql);
-        await client.end();
-
-        return toolResponse(
-          `Query executed successfully.\n\n` +
-            `Rows returned: ${result.rowCount}\n\n` +
-            `Results:\n\`\`\`json\n${JSON.stringify(result.rows, null, 2)}\n\`\`\``
-        );
-      } catch (error) {
-        try {
-          await client.end();
-        } catch {
-          // Ignore cleanup errors
+        // Resolve the connection string: prefer a server-side lookup from the
+        // Postgres service's own variables so the DSN never transits the model.
+        let dsn = connectionString;
+        if (!dsn) {
+          if (!projectId || !serviceId) {
+            return toolResponse(
+              "Provide either projectId + serviceId (preferred — resolves the DSN server-side) " +
+                "or a raw connectionString (fallback for non-Railway databases)."
+            );
+          }
+          const envId = await resolveEnvironmentId(projectId, environmentId);
+          const data = await gqlRequest(
+            gql`
+              query ($projectId: String!, $environmentId: String!, $serviceId: String!) {
+                variables(
+                  projectId: $projectId
+                  environmentId: $environmentId
+                  serviceId: $serviceId
+                )
+              }
+            `,
+            { projectId, environmentId: envId, serviceId }
+          );
+          const vars = data.variables || {};
+          // Railway Postgres exposes DATABASE_URL; prefer the public proxy URL
+          // when present since this server connects from outside the project.
+          dsn =
+            vars.DATABASE_PUBLIC_URL ||
+            vars.DATABASE_URL ||
+            vars.POSTGRES_URL ||
+            null;
+          if (!dsn) {
+            return toolResponse(
+              "Could not find a connection string on that service " +
+                "(looked for DATABASE_PUBLIC_URL, DATABASE_URL, POSTGRES_URL). " +
+                "It may be sealed, or this isn't a Postgres service. Pass connectionString explicitly if needed."
+            );
+          }
         }
-        return toolResponse(`Query failed: ${error.message}`);
+
+        const client = new pg.Client({ connectionString: dsn });
+        try {
+          await client.connect();
+          const result = await client.query(sql);
+          await client.end();
+
+          return toolResponse(
+            `Query executed successfully.\n\n` +
+              `Rows returned: ${result.rowCount}\n\n` +
+              `Results:\n\`\`\`json\n${JSON.stringify(result.rows, null, 2)}\n\`\`\``
+          );
+        } catch (error) {
+          try {
+            await client.end();
+          } catch {
+            // Ignore cleanup errors
+          }
+          return toolResponse(`Query failed: ${error.message}`);
+        }
+      } catch (error) {
+        return toolError("Query failed", error);
       }
     }
   );

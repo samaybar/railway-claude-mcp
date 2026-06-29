@@ -1,19 +1,18 @@
-# Combined Railway + GitHub MCP Server
+# Railway + GitHub MCP Server
 
-One MCP server exposing **both** the Railway and GitHub toolsets behind a single `/mcp` endpoint and a single **Login with Railway** flow — so it's **one connector in Claude** instead of two.
-
-This is the merge of [`railway-mcp/`](../railway-mcp) and [`github-mcp/`](../github-mcp). It's offered as the recommended single-connector option; the two standalone servers remain for anyone who wants them separate.
+One MCP server exposing **both** the Railway and GitHub toolsets behind a single `/mcp` endpoint and a single **Login with Railway** flow — so it's **one connector** in Claude or ChatGPT.
 
 ## What it exposes
 
-- **Railway tools** (always on): workspaces, projects, services, deploys, variables, domains, logs, Postgres, volumes. These call the Railway API **as the logged-in user** (their Login-with-Railway session), or via a static `RAILWAY_API_TOKEN` if set.
-- **GitHub tools** (on when `GITHUB_TOKEN` is set): repos, files, branches, pull requests, code search, commits. These call the GitHub API with your `GITHUB_TOKEN`.
+- **Railway tools**: workspaces, projects, services, deploys, variables, domains, logs, Postgres, volumes. These call the Railway API **as the logged-in user** (their Login-with-Railway session), or via a static `RAILWAY_API_TOKEN` if set.
+- **GitHub tools**: repos, files, branches, pull requests (including merge), code search, commits. The tools are always listed; until GitHub is connected they return a friendly "run `github-connect` first" message.
+- **`search` / `fetch`**: read-only tools for ChatGPT connector compatibility (search across your Railway projects + GitHub repos).
 
-If `GITHUB_TOKEN` is omitted, the server runs Railway-only and the GitHub tools simply aren't registered.
+GitHub is optional — turn it on with the **`github-connect`** tool (GitHub App device flow, no token to paste) or a static `GITHUB_TOKEN`. Set `GITHUB_MODE=off` to hide GitHub entirely.
 
 ## Auth
 
-Identical to the standalone servers: **Login with Railway** (OAuth 2.1 + OIDC, PKCE, dynamic client registration). The first verified login becomes the owner, or set `ALLOWED_RAILWAY_EMAILS`. See the standalone READMEs for the full model. Railway login can't mint a GitHub credential, so GitHub access still requires `GITHUB_TOKEN`.
+**Login with Railway** (OAuth 2.1 + OIDC, PKCE, dynamic client registration). The first verified login becomes the owner, or set `ALLOWED_RAILWAY_EMAILS`. The session token is refreshed automatically mid-session. Railway login can't mint a GitHub credential, so GitHub access is granted separately via `github-connect` (or `GITHUB_TOKEN`).
 
 ## Variables
 
@@ -29,9 +28,12 @@ Identical to the standalone servers: **Login with Railway** (OAuth 2.1 + OIDC, P
 | `PUBLIC_URL` | Auto | Derived from `RAILWAY_PUBLIC_DOMAIN`. |
 | `DATA_DIR` | Auto | `/app/data` volume for OAuth + GitHub token state. |
 
-## Connect to Claude
+## Connect
 
-Settings → Connectors → Add custom connector → paste `https://<your-domain>/mcp` → Connect → Login with Railway. One connector, both toolsets.
+- **Claude:** Settings → Connectors → Add custom connector → paste `https://<your-domain>/mcp` → Connect → Login with Railway.
+- **ChatGPT:** enable developer mode, add the same `/mcp` URL, and authorize. (Write actions require a Business/Enterprise plan; Plus/Pro connectors are read-only.)
+
+One connector, both toolsets.
 
 ## License
 
