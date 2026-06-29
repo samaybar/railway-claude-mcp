@@ -491,7 +491,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     write: GITHUB_MODE === "write",
   };
   const TOOL_GROUP = {
-    "railway-create-project": "rwd", "railway-create-environment": "rwd", "railway-set-variables": "rwd",
+    "railway-create-project": "rwd", "railway-update-project": "rwd", "railway-create-environment": "rwd", "railway-set-variables": "rwd",
     "railway-create-service-from-github": "rwd", "railway-deploy-template": "rwd", "railway-redeploy-service": "rwd",
     "railway-generate-domain": "rwd", "railway-create-volume": "rwd", "railway-query-postgres": "rwd",
     "railway-delete-service": "rwx", "railway-delete-volume": "rwx",
@@ -533,6 +533,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     "railway-status": { title: "Railway status", readOnlyHint: true, openWorldHint: true },
     // Railway — non-destructive writes
     "railway-create-project": { title: "Create project", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-update-project": { title: "Rename project", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     "railway-create-environment": { title: "Create environment", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     "railway-set-variables": { title: "Set variables", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     "railway-generate-domain": { title: "Generate domain", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -823,6 +824,49 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
         );
       } catch (error) {
         return toolError("Failed to create project", error);
+      }
+    }
+  );
+
+  // -- railway-update-project --
+  server.tool(
+    "railway-update-project",
+    "Rename a Railway project (and optionally set its description). If projectId is omitted, it renames THIS connector's own project — handy for giving an auto-generated project name (like 'heartfelt-eagerness') something logical.",
+    {
+      name: z.string().describe("New project name"),
+      projectId: z
+        .string()
+        .optional()
+        .describe(
+          "Project to rename. Defaults to the project this connector runs in (RAILWAY_PROJECT_ID)."
+        ),
+      description: z.string().optional().describe("Optional new project description"),
+    },
+    async ({ name, projectId, description }) => {
+      const id = projectId || process.env.RAILWAY_PROJECT_ID;
+      if (!id) {
+        return toolResponse(
+          "No projectId given and this connector can't self-identify its project (RAILWAY_PROJECT_ID is unset). Pass projectId explicitly."
+        );
+      }
+      try {
+        const input = { name };
+        if (description !== undefined) input.description = description;
+        const data = await gqlRequest(
+          gql`
+            mutation ($id: String!, $input: ProjectUpdateInput!) {
+              projectUpdate(id: $id, input: $input) {
+                id
+                name
+              }
+            }
+          `,
+          { id, input }
+        );
+        const p = data.projectUpdate;
+        return toolResponse(`Renamed project to **${p.name}** (${p.id}).`);
+      } catch (error) {
+        return toolError("Failed to update project", error);
       }
     }
   );
