@@ -547,7 +547,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     "railway-query-postgres": { title: "Query Postgres", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     // Connector meta + guidance (read-only / informational)
     "update-this-connector": { title: "Update this connector", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    "railway-github-access": { title: "How to grant Railway GitHub access", readOnlyHint: true, openWorldHint: false },
+    "railway-github-access": { title: "Grant GitHub App access", readOnlyHint: true, openWorldHint: false },
     "railway-domain-guide": { title: "Domain guide", readOnlyHint: true, openWorldHint: false },
     "railway-plan-info": { title: "Plan info", readOnlyHint: true, openWorldHint: true },
     // GitHub — connection + read-only
@@ -579,7 +579,19 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   const _registerTool = server.tool.bind(server);
   server.tool = (name, ...rest) => {
     if (!allowedTool(TOOL_GROUP[name])) return undefined;
-    const ann = TOOL_ANNOTATIONS[name];
+    let ann = TOOL_ANNOTATIONS[name];
+    if (ann) {
+      // Prefix the display title by provider so clients (which show the
+      // annotation title, not the tool name) still group/label tools as
+      // Railway vs GitHub. Cross-provider tools (search/fetch, the connector
+      // meta tools) keep their plain title.
+      const pfx = name.startsWith("railway-")
+        ? "Railway: "
+        : name.startsWith("github-")
+        ? "GitHub: "
+        : "";
+      ann = { ...ann, title: pfx + (ann.title || name) };
+    }
     const last = rest[rest.length - 1];
     const prev = rest[rest.length - 2];
     // Inject annotations as (..., paramsSchema, annotations, cb). Only when the
