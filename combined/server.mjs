@@ -273,6 +273,7 @@ const DESTRUCTIVE_TOOLS = new Set([
   "railway-create-project",
   "railway-create-environment",
   "railway-create-service-from-github",
+  "railway-update-service-source",
   "railway-delete-service",
   "railway-set-variables",
   "railway-redeploy-service",
@@ -319,6 +320,8 @@ function extractArgSummary(toolName, args = {}) {
       return `project=${a.projectId || "?"} name=${a.name || "?"}`;
     case "railway-create-service-from-github":
       return `project=${a.projectId || "?"} repo=${a.repo || "?"}${a.branch ? `@${a.branch}` : ""}`;
+    case "railway-update-service-source":
+      return `service=${a.serviceId || "?"}${a.repo ? ` repo=${a.repo}` : ""}${a.branch ? `@${a.branch}` : ""}${a.rootDirectory ? ` root=${a.rootDirectory}` : ""}`;
     case "railway-delete-service":
       return `service=${a.serviceId || "?"}`;
     case "railway-set-variables": {
@@ -493,6 +496,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   const TOOL_GROUP = {
     "railway-create-project": "rwd", "railway-update-project": "rwd", "railway-create-environment": "rwd", "railway-set-variables": "rwd",
     "railway-create-service-from-github": "rwd", "railway-deploy-template": "rwd", "railway-redeploy-service": "rwd",
+    "railway-update-service-source": "rwd",
     "railway-generate-domain": "rwd", "railway-create-volume": "rwd", "railway-query-postgres": "rwd",
     "railway-delete-service": "rwx", "railway-delete-volume": "rwx",
     "github-connect": "ghr", "github-status": "ghr", "github-check-connection": "ghr",
@@ -540,6 +544,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     "railway-deploy-template": { title: "Deploy template", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     "railway-redeploy-service": { title: "Redeploy service", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     "railway-create-service-from-github": { title: "Create service from GitHub", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-update-service-source": { title: "Update service source", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     "railway-create-volume": { title: "Create volume", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     // Railway — destructive
     "railway-delete-service": { title: "Delete service", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
@@ -1850,6 +1855,141 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
         );
       } catch (error) {
         return toolError("Failed to create service", error);
+      }
+    }
+  );
+
+  // -- railway-update-service-source --
+  // Retarget an EXISTING service's connected repo/branch (and optionally root
+  // directory) without recreating it, then redeploy. This fills the gap that
+  // bites when a service was created pointing at the wrong branch (e.g. some
+  // create-deployment paths silently default to main even when a branch was
+  // requested): instead of deleting and recreating, just repoint the source.
+  // repo/branch are set via serviceConnect (the same mutation that binds source
+  // in railway-create-service-from-github); rootDirectory is a per-environment
+  // instance setting, so it goes through serviceInstanceUpdate.
+  server.tool(
+    "railway-update-service-source",
+    "Change an existing service's connected GitHub repo and/or branch (and optionally its root directory), then redeploy — WITHOUT recreating the service. Use this when a service is deployed from the wrong branch or repo (a common trap: some deploy paths default a new service to `main` even when another branch was asked for). Prefer this over deleting and recreating. For a brand-new service, use railway-create-service-from-github instead. At least one of repo, branch, or rootDirectory must be provided.",
+    {
+      projectId: z.string().describe("The project ID"),
+      serviceId: z.string().describe("The service ID to retarget"),
+      environmentId: z
+        .string()
+        .optional()
+        .describe("The environment ID (defaults to the project's production environment)"),
+      repo: z
+        .string()
+        .optional()
+        .describe("New GitHub repo in owner/name format. Omit to keep the current repo."),
+      branch: z
+        .string()
+        .optional()
+        .describe("New branch to deploy. Omit to keep the current branch."),
+      rootDirectory: z
+        .string()
+        .optional()
+        .describe("New root directory (for monorepos). Omit to leave unchanged."),
+    },
+    async ({ projectId, serviceId, environmentId, repo, branch, rootDirectory }) => {
+      if (!repo && !branch && rootDirectory === undefined) {
+        return toolResponse(
+          "Nothing to update — provide at least one of repo, branch, or rootDirectory."
+        );
+      }
+      try {
+        const envId = await resolveEnvironmentId(projectId, environmentId);
+
+        // Soft branch validation: if GitHub is connected and we have both a repo
+        // and a branch, warn (don't block) when the branch can't be found. The
+        // repo owner may differ from the connected account, so a miss isn't proof
+        // the branch is bad — we surface it but still proceed.
+        let branchWarning = "";
+        if (branch && repo && /^[^/]+\/[^/]+$/.test(repo)) {
+          try {
+            const [o, r] = repo.split("/");
+            await octokit.repos.getBranch({ owner: o, repo: r, branch });
+          } catch (e) {
+            if (e.status === 404) {
+              branchWarning =
+                `\n\n⚠️ Heads up: I couldn't find branch \`${branch}\` in \`${repo}\` ` +
+                `(it may not exist, or the connector's GitHub access can't see it). ` +
+                `I proceeded anyway — if the build fails, double-check the branch name.`;
+            }
+            // Any other error (no GitHub, rate limit): skip validation silently.
+          }
+        }
+
+        // 1. Repoint repo/branch via serviceConnect (only if either was given).
+        if (repo || branch) {
+          const connectInput = {};
+          if (repo) connectInput.repo = repo;
+          if (branch) connectInput.branch = branch;
+          await gqlRequest(
+            gql`
+              mutation ServiceConnect($id: String!, $input: ServiceConnectInput!) {
+                serviceConnect(id: $id, input: $input) {
+                  id
+                }
+              }
+            `,
+            { id: serviceId, input: connectInput }
+          );
+        }
+
+        // 2. Update rootDirectory via serviceInstanceUpdate (per-environment).
+        if (rootDirectory !== undefined) {
+          await gqlRequest(
+            gql`
+              mutation ($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
+                serviceInstanceUpdate(
+                  serviceId: $serviceId
+                  environmentId: $environmentId
+                  input: $input
+                )
+              }
+            `,
+            { serviceId, environmentId: envId, input: { rootDirectory } }
+          );
+        }
+
+        // 3. Redeploy from the (now-updated) source.
+        try {
+          await gqlRequest(
+            gql`
+              mutation ($serviceId: String!, $environmentId: String!) {
+                serviceInstanceDeploy(serviceId: $serviceId, environmentId: $environmentId)
+              }
+            `,
+            { serviceId, environmentId: envId }
+          );
+        } catch (deployError) {
+          return toolResponse(
+            `Source updated, but the redeploy trigger failed.\n\n` +
+              `Service: ${serviceId}\n` +
+              (repo ? `Repo: ${repo}\n` : "") +
+              (branch ? `Branch: ${branch}\n` : "") +
+              (rootDirectory !== undefined ? `Root: ${rootDirectory}\n` : "") +
+              `Error: ${deployError.message}\n\n` +
+              `Trigger it manually with railway-redeploy-service.${branchWarning}`
+          );
+        }
+
+        const changes = [
+          repo ? `repo → ${repo}` : null,
+          branch ? `branch → ${branch}` : null,
+          rootDirectory !== undefined ? `root → ${rootDirectory || "(empty)"}` : null,
+        ].filter(Boolean);
+
+        return toolResponse(
+          `Service source updated and redeploy triggered.\n\n` +
+            `Service: ${serviceId}\n` +
+            `Changed: ${changes.join(", ")}\n` +
+            `Environment: ${envId}\n\n` +
+            `Use railway-list-deployments to watch the build.${branchWarning}`
+        );
+      } catch (error) {
+        return toolError("Failed to update service source", error);
       }
     }
   );
