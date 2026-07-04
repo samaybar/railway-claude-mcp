@@ -138,25 +138,33 @@ const AUTH_CODE_TTL = 5 * 60 * 1000;
 
 function loadStore() {
   try {
-    if (!fs.existsSync(STORE_PATH)) return;
+    if (!fs.existsSync(STORE_PATH)) {
+      console.log(`[storage] no store file at ${STORE_PATH} — starting fresh (expected on first-ever boot; on a redeploy this means the volume did NOT persist)`);
+      return;
+    }
     const data = JSON.parse(fs.readFileSync(STORE_PATH, "utf-8"));
     const now = Date.now();
     for (const [k, v] of data.clients || []) registeredClients.set(k, v);
+    let accessDropped = 0;
     for (const [k, v] of data.accessTokens || []) {
       if (v.expiresAt > now) accessTokens.set(k, v);
+      else accessDropped++;
     }
+    let refreshDropped = 0;
     for (const [k, v] of data.refreshTokens || []) {
       if (v.expiresAt > now) refreshTokens.set(k, v);
+      else refreshDropped++;
     }
     if (data.railwayClientReg) railwayClientReg = data.railwayClientReg;
     if (data.owner) owner = data.owner;
     if (data.github) githubAuth = data.github;
     console.log(
-      `Loaded ${registeredClients.size} clients, ${accessTokens.size} access tokens, ${refreshTokens.size} refresh tokens` +
+      `[storage] loaded ${registeredClients.size} clients, ${accessTokens.size} access tokens ` +
+        `(${accessDropped} expired), ${refreshTokens.size} refresh tokens (${refreshDropped} expired)` +
         (owner ? `, owner=${owner.email}` : "")
     );
   } catch (err) {
-    console.error("Failed to load auth store, starting fresh:", err.message);
+    console.error("[storage] failed to load auth store, starting fresh:", err.message);
   }
 }
 
