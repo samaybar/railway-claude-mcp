@@ -3413,23 +3413,32 @@ function isUserAllowed(me) {
 // override if set, otherwise the session's access token (refreshed if stale).
 async function resolveRailwayAccessToken(mcpToken) {
   if (RAILWAY_API_TOKEN) return RAILWAY_API_TOKEN;
+  const fp = mcpToken ? mcpToken.slice(0, 6) : "none";
   const entry = accessTokens.get(mcpToken);
   const rw = entry?.railway;
-  if (!rw) return null;
+  if (!rw) {
+    console.warn(`[rw-token] tok=${fp} reason=no-session-entry (client has a bearer we don't recognize; likely store reset)`);
+    return null;
+  }
   if (Date.now() < rw.expiresAt - 60 * 1000) return rw.accessToken;
   // Access token is stale. We must refresh; if we can't, the token is dead and
   // returning it anyway just produces "Not Authorized" on every downstream call.
   // Return null instead so the caller surfaces a clear "reconnect" message.
-  if (!rw.refreshToken) return null;
+  if (!rw.refreshToken) {
+    console.warn(`[rw-token] tok=${fp} reason=no-refresh-token (access token stale, nothing to refresh with)`);
+    return null;
+  }
   const refreshed = await railwayRefresh(rw.refreshToken);
   if (refreshed?.access_token) {
     rw.accessToken = refreshed.access_token;
     if (refreshed.refresh_token) rw.refreshToken = refreshed.refresh_token;
     rw.expiresAt = Date.now() + (refreshed.expires_in || 3600) * 1000;
     saveStore();
+    console.log(`[rw-token] tok=${fp} refreshed ok, next expiry in ${Math.round((rw.expiresAt - Date.now()) / 1000)}s`);
     return rw.accessToken;
   }
   // Refresh failed (refresh token expired or revoked). Treat as logged out.
+  console.warn(`[rw-token] tok=${fp} reason=refresh-failed (Railway rejected the refresh token; user must reconnect)`);
   return null;
 }
 
