@@ -97,8 +97,19 @@ const MCP_ACTIVITY_ALERTS = parseBool(process.env.MCP_ACTIVITY_ALERTS);
 // ---------------------------------------------------------------------------
 // Persistent OAuth storage
 // ---------------------------------------------------------------------------
-const DATA_DIR = process.env.DATA_DIR || "./data";
+const DATA_DIR =
+  process.env.DATA_DIR ||
+  process.env.RAILWAY_VOLUME_MOUNT_PATH ||
+  "./data";
 const STORE_PATH = path.join(DATA_DIR, "auth-store.json");
+console.log(
+  `[storage] auth store path=${STORE_PATH} ` +
+    `(DATA_DIR=${process.env.DATA_DIR || "unset"}, ` +
+    `RAILWAY_VOLUME_MOUNT_PATH=${process.env.RAILWAY_VOLUME_MOUNT_PATH || "unset"})` +
+    (process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH
+      ? ""
+      : " — WARNING: no volume path resolved, sessions will NOT survive redeploys")
+);
 
 const registeredClients = new Map();
 const authCodes = new Map();
