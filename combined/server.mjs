@@ -3992,6 +3992,24 @@ function checkAuth(req, res, next) {
 
 // --- MCP endpoint ---
 app.post("/mcp", checkAuth, async (req, res) => {
+  // Short correlation id so a single request can be grepped end to end across
+  // its start / auth / outcome / abort lines.
+  const rid = crypto.randomBytes(4).toString("hex");
+  const started = Date.now();
+  const method = req.body?.method || "?";
+  const toolName = method === "tools/call" ? (req.body?.params?.name || "?") : "";
+  const label = toolName ? `${method}:${toolName}` : method;
+
+  // Fires when the socket closes. If it closes before the response was flushed,
+  // the client aborted mid-flight — the real signature of a "disconnect" that
+  // otherwise leaves no trace in the logs.
+  res.on("close", () => {
+    const ms = Date.now() - started;
+    if (!res.writableEnded) {
+      console.warn(`[mcp-req] rid=${rid} ${label} ABORTED by client after ${ms}ms (response not finished)`);
+    }
+  });
+
   try {
     // Log/alert on MCP activity before handing off to the transport.
     // Wrapped in try/catch so activity logging bugs never break MCP traffic.
@@ -4003,6 +4021,7 @@ app.post("/mcp", checkAuth, async (req, res) => {
 
     const railwayToken = await resolveRailwayAccessToken(req.authToken);
     if (!railwayToken) {
+      console.warn(`[mcp-req] rid=${rid} ${label} -> 401 no-railway-token after ${Date.now() - started}ms`);
       return res.status(401).json({
         jsonrpc: "2.0",
         error: {
@@ -4022,13 +4041,19 @@ app.post("/mcp", checkAuth, async (req, res) => {
     const server = createRailwayMcpServer(railwayToken, githubToken, req.authToken);
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
+
+    console.log(
+      `[mcp-req] rid=${rid} ${label} -> ${res.statusCode} ${Date.now() - started}ms ct=${res.getHeader("content-type") || "?"}`
+    );
   } catch (err) {
-    console.error("[Error] Request handling failed:", err);
-    res.status(500).json({
-      jsonrpc: "2.0",
-      error: { code: -32603, message: "Internal server error" },
-      id: null,
-    });
+    console.error(`[mcp-req] rid=${rid} ${label} -> ERROR after ${Date.now() - started}ms:`, err);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "Internal server error" },
+        id: req.body?.id ?? null,
+      });
+    }
   }
 });
 
