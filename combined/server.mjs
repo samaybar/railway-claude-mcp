@@ -4017,6 +4017,7 @@ app.post("/mcp", checkAuth, async (req, res) => {
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
+      enableJsonResponse: true,
     });
     const server = createRailwayMcpServer(railwayToken, githubToken, req.authToken);
     await server.connect(transport);
