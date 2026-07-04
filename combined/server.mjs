@@ -3855,6 +3855,10 @@ app.get("/oauth/authorize", (req, res) => {
   u.searchParams.set("state", railwayState);
   u.searchParams.set("code_challenge", railwayChallenge);
   u.searchParams.set("code_challenge_method", "S256");
+  // Force a fresh consent so Railway re-issues a refresh token even when a prior
+  // grant already exists. Without this, offline_access can be silently ignored on
+  // re-auth and the session ends up non-refreshable (dies ~1h later).
+  u.searchParams.set("prompt", process.env.RAILWAY_OAUTH_PROMPT || "consent");
   res.redirect(302, u.toString());
 });
 
