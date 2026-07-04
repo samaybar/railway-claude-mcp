@@ -3910,6 +3910,15 @@ app.get("/oauth/railway/callback", async (req, res) => {
       email: (me.email || "").toLowerCase(),
     };
 
+    if (!railway.refreshToken) {
+      console.warn(
+        `[auth] WARNING: Railway returned NO refresh_token for ${railway.email || me.sub} ` +
+          `(scope=${RAILWAY_OAUTH_SCOPE}). This session will become non-refreshable when the ` +
+          `access token expires (~${Math.round((tok.expires_in || 3600) / 60)}min) and force a reconnect. ` +
+          `Check that offline_access is granted and prompt=consent is honored.`
+      );
+    }
+
     // Mint our own auth code for Claude, carrying the Railway session with it.
     const mcpCode = generateId(32);
     authCodes.set(mcpCode, {
