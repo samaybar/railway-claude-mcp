@@ -4057,7 +4057,8 @@ app.post("/mcp", checkAuth, async (req, res) => {
   }
 });
 
-app.get("/mcp", (_req, res) => {
+app.get("/mcp", (req, res) => {
+  console.log(`[mcp-get] GET /mcp (no server-push stream; returning 405) ua=${req.headers["user-agent"] || "unknown"} ip=${req.ip || "unknown"}`);
   res.status(405).set("Allow", "POST").send("Method Not Allowed");
 });
 
