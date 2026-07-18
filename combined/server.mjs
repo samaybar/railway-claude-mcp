@@ -3683,7 +3683,7 @@ app.get("/", (_req, res) => {
 <body>
   <div class="card">
     <h1>Railway + GitHub MCP</h1>
-    <div class="sub">A Claude connector that builds and ships apps for you — it manages Railway (hosting) and, optionally, GitHub (your code).</div>
+    <div class="sub">A connector for Claude or ChatGPT that builds and ships apps for you — it manages Railway (hosting) and, optionally, GitHub (your code).</div>
 
     <div class="banner">
       <b>Before you start:</b> custom connectors require a paid plan on Claude or ChatGPT — they aren't available on the free tiers. Check your provider's current plans to see which ones include custom connectors.
