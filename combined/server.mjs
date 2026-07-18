@@ -3720,11 +3720,6 @@ app.get("/", (_req, res) => {
     </div>
   </div>
   <script>
-    function showTab(id, btn) {
-      document.querySelectorAll('.pane').forEach(function (p) { p.hidden = p.id !== id; });
-      document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
-      btn.classList.add('active');
-    }
     function copyUrl(btn) {
       navigator.clipboard.writeText(btn.previousElementSibling.textContent);
       btn.textContent = 'Copied';
