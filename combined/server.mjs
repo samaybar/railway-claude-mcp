@@ -3683,43 +3683,30 @@ app.get("/", (_req, res) => {
     <h1>Railway + GitHub MCP</h1>
     <div class="sub">A Claude connector that builds and ships apps for you — it manages Railway (hosting) and, optionally, GitHub (your code).</div>
 
-    <div class="tabs">
-      <button class="tab active" onclick="showTab('new', this)">I'm new to this</button>
-      <button class="tab" onclick="showTab('pro', this)">I know what I'm doing</button>
+    <div class="banner">
+      <b>Before you start:</b> custom connectors require a paid plan on Claude or ChatGPT — they aren't available on the free tiers. Check your provider's current plans to see which ones include custom connectors.
     </div>
 
-    <div id="pro" class="pane" hidden>
-      <label>Add this connector to Claude</label>
-      <div class="url"><code>${mcpUrl}</code><button onclick="copyUrl(this)">Copy</button></div>
-      <ol>
-        <li>Claude → <b>Settings → Connectors → Add custom connector</b></li>
-        <li>Paste the URL, save</li>
-        <li><b>Connect</b> → <b>Log in with Railway</b></li>
-      </ol>
-      ${ghPro}
+    <div class="what">
+      <p><b>What this is.</b> A "connector" gives your AI assistant — Claude or ChatGPT — the ability to act in:</p>
+      <ul>
+        <li><b>Railway</b> — where your app actually runs (servers, database, deploys).</li>
+        <li><b>GitHub</b> — where your code is stored. Optional; add it whenever.</li>
+      </ul>
+      <p>You describe what you want in plain English, and your assistant creates the project, writes the code, and deploys it — acting as you, securely.</p>
     </div>
 
-    <div id="new" class="pane">
-      <div class="what">
-        <p><b>What this is.</b> A "connector" gives Claude (the AI you chat with) the ability to act in:</p>
-        <ul>
-          <li><b>Railway</b> — where your app actually runs (servers, database, deploys).</li>
-          <li><b>GitHub</b> — where your code is stored. Optional; add it whenever.</li>
-        </ul>
-        <p>You describe what you want in plain English, and Claude creates the project, writes the code, and deploys it — acting as you, securely.</p>
-      </div>
+    <label>Connect it</label>
+    <div class="url"><code>${mcpUrl}</code><button onclick="copyUrl(this)">Copy</button></div>
+    <ol>
+      <li><b>Claude:</b> Settings → Connectors → Add custom connector → paste the address above → save.<br>
+          <b>ChatGPT:</b> turn on developer mode in Settings, then add a connector using the same address.</li>
+      <li>Click <b>Connect</b>, then <b>Log in with Railway</b> and approve.</li>
+      <li>Test it — ask your assistant: <i>"list my Railway projects."</i></li>
+    </ol>
 
-      <label>Get set up</label>
-      <ol>
-        <li>You'll need a <b>paid Claude plan</b> (Pro or above) — custom connectors aren't on the free tier.</li>
-        <li>Copy this connector address:
-          <div class="url"><code>${mcpUrl}</code><button onclick="copyUrl(this)">Copy</button></div>
-        </li>
-        <li>In Claude, go to <b>Settings → Connectors → Add custom connector</b>, paste the address, and save.</li>
-        <li>Click <b>Connect</b>, then <b>Log in with Railway</b> and approve. That's it — try asking Claude <i>"list my Railway projects."</i></li>
-        ${ghNew}
-      </ol>
-    </div>
+    <label>Add GitHub</label>
+    <div class="gh">${githubBlock}</div>
 
     <div class="try">
       <label>✨ Try this first</label>
