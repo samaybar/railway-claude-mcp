@@ -3648,11 +3648,13 @@ app.get("/", (_req, res) => {
     box-shadow: 0 8px 40px rgba(0,0,0,.18); }
   h1 { font-size: 1.4rem; margin-bottom: .25rem; }
   .sub { color: #666; font-size: .95rem; margin-bottom: 1.25rem; }
-  .tabs { display: flex; gap: 4px; border-bottom: 1px solid #eee; margin-bottom: 1.25rem; }
-  .tab { background: none; color: #777; border: none; border-bottom: 2px solid transparent;
-    border-radius: 0; padding: .55rem .8rem; font-size: .9rem; font-weight: 600; cursor: pointer; }
-  .tab:hover { background: none; color: #1c1f26; }
-  .tab.active { color: #6A45F0; border-bottom-color: #6A45F0; }
+  .banner { background: #fff8e6; border: 1px solid #f0d9a0; border-radius: 10px;
+    padding: .8rem 1rem; margin-bottom: 1.25rem; font-size: .9rem; line-height: 1.55; color: #5c4813; }
+  .gh { background: #f9f8fd; border: 1px solid #eee; border-radius: 10px; padding: .9rem 1rem;
+    margin-bottom: 1rem; font-size: .92rem; line-height: 1.6; }
+  .gh p { margin-bottom: .6rem; }
+  .gh p:last-child { margin-bottom: 0; }
+  .advanced { color: #777; font-size: .85rem; }
   label { font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #6A45F0; }
   .url { display: flex; gap: 8px; margin: .5rem 0 1.25rem; }
   .url code { flex: 1; background: #f3f0fb; border: 1px solid #e0d8f5; border-radius: 8px;
