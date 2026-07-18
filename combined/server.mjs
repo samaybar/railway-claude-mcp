@@ -3716,7 +3716,7 @@ app.get("/", (_req, res) => {
         <p>Build me a website that explains how easy it is to start coding in Claude with Railway. Include an animated chart, and a link to the Railway template so others can deploy their own. Then deploy it to Railway and send me the live URL.</p>
         <button onclick="copyText(this)">Copy</button>
       </div>
-      <div class="hint">Paste this to Claude once the connector is connected. It builds a real site and ships it live, all from one message.</div>
+      <div class="hint">Paste this to your assistant once the connector is connected. It builds a real site and ships it live, all from one message.</div>
     </div>
   </div>
   <script>
