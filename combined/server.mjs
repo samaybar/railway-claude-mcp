@@ -3629,18 +3629,11 @@ app.get("/", (_req, res) => {
   const tokenLink =
     "https://github.com/settings/tokens/new?scopes=repo&description=Railway-GitHub-MCP";
 
-  const ghPro = ghEnabled
-    ? `<div class="note">✓ GitHub tools are <b>enabled</b>. Custom connectors require a paid Claude plan.</div>`
-    : `<div class="note"><b>GitHub is optional</b> (Railway tools work without it). Easiest: ask Claude to run <code>github-connect</code> — it walks you through installing the app + picking repos, no token to paste. Or set a <code>GITHUB_TOKEN</code> variable manually. Custom connectors require a paid Claude plan.</div>`;
-
-  const ghNew = ghEnabled
-    ? `<li><b>GitHub is already connected</b> ✓ — you can also ask Claude to read and write your code (e.g. "create a repo and push a hello-world app").</li>`
-    : `<li><b>Optional: connect GitHub</b> so Claude can store and write your code (create repos, commit files, open pull requests):
-        <ol class="sub-ol">
-          <li><b>Easiest:</b> once you've added the connector and logged in, ask Claude to run <code>github-connect</code>. It gives you a link to install the app (pick which repos it can touch) and a code to authorize — no token to copy. New to GitHub? <a href="https://github.com/signup" target="_blank" rel="noopener">Sign up free</a> first.</li>
-          <li><b>Or manually:</b> <a href="${tokenLink}" target="_blank" rel="noopener">create a token</a> (<code>repo</code> pre-selected) and set it as a <code>GITHUB_TOKEN</code> variable on this service.</li>
-        </ol>
-        You can skip this for now and add it anytime.</li>`;
+  const githubBlock = ghEnabled
+    ? `<p>✓ <b>GitHub is connected.</b> Your assistant can read and write your code — try "create a repo and push a hello-world app".</p>`
+    : `<p><b>Optional — add it whenever you like.</b> Railway tools work without it. Connecting GitHub lets your assistant store and write your code: create repos, commit files, open pull requests.</p>
+       <p>Once the connector is added and you've logged in, just ask your assistant to run <code>github-connect</code>. It gives you a link to install the app (you pick which repos it can touch) and a short code to authorize — nothing to copy or paste. New to GitHub? <a href="https://github.com/signup" target="_blank" rel="noopener">Sign up free</a> first.</p>
+       <p class="advanced">Advanced: instead of <code>github-connect</code>, you can <a href="${tokenLink}" target="_blank" rel="noopener">create a token</a> and set it as a <code>GITHUB_TOKEN</code> variable on this service.</p>`;
 
   res.type("html").send(`<!DOCTYPE html>
 <html lang="en"><head>
