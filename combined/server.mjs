@@ -3629,18 +3629,11 @@ app.get("/", (_req, res) => {
   const tokenLink =
     "https://github.com/settings/tokens/new?scopes=repo&description=Railway-GitHub-MCP";
 
-  const ghPro = ghEnabled
-    ? `<div class="note">✓ GitHub tools are <b>enabled</b>. Custom connectors require a paid Claude plan.</div>`
-    : `<div class="note"><b>GitHub is optional</b> (Railway tools work without it). Easiest: ask Claude to run <code>github-connect</code> — it walks you through installing the app + picking repos, no token to paste. Or set a <code>GITHUB_TOKEN</code> variable manually. Custom connectors require a paid Claude plan.</div>`;
-
-  const ghNew = ghEnabled
-    ? `<li><b>GitHub is already connected</b> ✓ — you can also ask Claude to read and write your code (e.g. "create a repo and push a hello-world app").</li>`
-    : `<li><b>Optional: connect GitHub</b> so Claude can store and write your code (create repos, commit files, open pull requests):
-        <ol class="sub-ol">
-          <li><b>Easiest:</b> once you've added the connector and logged in, ask Claude to run <code>github-connect</code>. It gives you a link to install the app (pick which repos it can touch) and a code to authorize — no token to copy. New to GitHub? <a href="https://github.com/signup" target="_blank" rel="noopener">Sign up free</a> first.</li>
-          <li><b>Or manually:</b> <a href="${tokenLink}" target="_blank" rel="noopener">create a token</a> (<code>repo</code> pre-selected) and set it as a <code>GITHUB_TOKEN</code> variable on this service.</li>
-        </ol>
-        You can skip this for now and add it anytime.</li>`;
+  const githubBlock = ghEnabled
+    ? `<p>✓ <b>GitHub is connected.</b> Your assistant can read and write your code — try "create a repo and push a hello-world app".</p>`
+    : `<p><b>Optional — add it whenever you like.</b> Railway tools work without it. Connecting GitHub lets your assistant store and write your code: create repos, commit files, open pull requests.</p>
+       <p>Once the connector is added and you've logged in, just ask your assistant to run <code>github-connect</code>. It gives you a link to install the app (you pick which repos it can touch) and a short code to authorize — nothing to copy or paste. New to GitHub? <a href="https://github.com/signup" target="_blank" rel="noopener">Sign up free</a> first.</p>
+       <p class="advanced">Advanced: instead of <code>github-connect</code>, you can <a href="${tokenLink}" target="_blank" rel="noopener">create a token</a> and set it as a <code>GITHUB_TOKEN</code> variable on this service.</p>`;
 
   res.type("html").send(`<!DOCTYPE html>
 <html lang="en"><head>
@@ -3655,11 +3648,13 @@ app.get("/", (_req, res) => {
     box-shadow: 0 8px 40px rgba(0,0,0,.18); }
   h1 { font-size: 1.4rem; margin-bottom: .25rem; }
   .sub { color: #666; font-size: .95rem; margin-bottom: 1.25rem; }
-  .tabs { display: flex; gap: 4px; border-bottom: 1px solid #eee; margin-bottom: 1.25rem; }
-  .tab { background: none; color: #777; border: none; border-bottom: 2px solid transparent;
-    border-radius: 0; padding: .55rem .8rem; font-size: .9rem; font-weight: 600; cursor: pointer; }
-  .tab:hover { background: none; color: #1c1f26; }
-  .tab.active { color: #6A45F0; border-bottom-color: #6A45F0; }
+  .banner { background: #fff8e6; border: 1px solid #f0d9a0; border-radius: 10px;
+    padding: .8rem 1rem; margin-bottom: 1.25rem; font-size: .9rem; line-height: 1.55; color: #5c4813; }
+  .gh { background: #f9f8fd; border: 1px solid #eee; border-radius: 10px; padding: .9rem 1rem;
+    margin-bottom: 1rem; font-size: .92rem; line-height: 1.6; }
+  .gh p { margin-bottom: .6rem; }
+  .gh p:last-child { margin-bottom: 0; }
+  .advanced { color: #777; font-size: .85rem; }
   label { font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #6A45F0; }
   .url { display: flex; gap: 8px; margin: .5rem 0 1.25rem; }
   .url code { flex: 1; background: #f3f0fb; border: 1px solid #e0d8f5; border-radius: 8px;
@@ -3688,45 +3683,32 @@ app.get("/", (_req, res) => {
 <body>
   <div class="card">
     <h1>Railway + GitHub MCP</h1>
-    <div class="sub">A Claude connector that builds and ships apps for you — it manages Railway (hosting) and, optionally, GitHub (your code).</div>
+    <div class="sub">A connector for Claude or ChatGPT that builds and ships apps for you — it manages Railway (hosting) and, optionally, GitHub (your code).</div>
 
-    <div class="tabs">
-      <button class="tab active" onclick="showTab('new', this)">I'm new to this</button>
-      <button class="tab" onclick="showTab('pro', this)">I know what I'm doing</button>
+    <div class="banner">
+      <b>Before you start:</b> custom connectors require a paid plan on Claude or ChatGPT — they aren't available on the free tiers. Check your provider's current plans to see which ones include custom connectors.
     </div>
 
-    <div id="pro" class="pane" hidden>
-      <label>Add this connector to Claude</label>
-      <div class="url"><code>${mcpUrl}</code><button onclick="copyUrl(this)">Copy</button></div>
-      <ol>
-        <li>Claude → <b>Settings → Connectors → Add custom connector</b></li>
-        <li>Paste the URL, save</li>
-        <li><b>Connect</b> → <b>Log in with Railway</b></li>
-      </ol>
-      ${ghPro}
+    <div class="what">
+      <p><b>What this is.</b> A "connector" gives your AI assistant — Claude or ChatGPT — the ability to act in:</p>
+      <ul>
+        <li><b>Railway</b> — where your app actually runs (servers, database, deploys).</li>
+        <li><b>GitHub</b> — where your code is stored. Optional; add it whenever.</li>
+      </ul>
+      <p>You describe what you want in plain English, and your assistant creates the project, writes the code, and deploys it — acting as you, securely.</p>
     </div>
 
-    <div id="new" class="pane">
-      <div class="what">
-        <p><b>What this is.</b> A "connector" gives Claude (the AI you chat with) the ability to act in:</p>
-        <ul>
-          <li><b>Railway</b> — where your app actually runs (servers, database, deploys).</li>
-          <li><b>GitHub</b> — where your code is stored. Optional; add it whenever.</li>
-        </ul>
-        <p>You describe what you want in plain English, and Claude creates the project, writes the code, and deploys it — acting as you, securely.</p>
-      </div>
+    <label>Connect it</label>
+    <div class="url"><code>${mcpUrl}</code><button onclick="copyUrl(this)">Copy</button></div>
+    <ol>
+      <li><b>Claude:</b> Settings → Connectors → Add custom connector → paste the address above → save.<br>
+          <b>ChatGPT:</b> turn on developer mode in Settings, then add a connector using the same address.</li>
+      <li>Click <b>Connect</b>, then <b>Log in with Railway</b> and approve.</li>
+      <li>Test it — ask your assistant: <i>"list my Railway projects."</i></li>
+    </ol>
 
-      <label>Get set up</label>
-      <ol>
-        <li>You'll need a <b>paid Claude plan</b> (Pro or above) — custom connectors aren't on the free tier.</li>
-        <li>Copy this connector address:
-          <div class="url"><code>${mcpUrl}</code><button onclick="copyUrl(this)">Copy</button></div>
-        </li>
-        <li>In Claude, go to <b>Settings → Connectors → Add custom connector</b>, paste the address, and save.</li>
-        <li>Click <b>Connect</b>, then <b>Log in with Railway</b> and approve. That's it — try asking Claude <i>"list my Railway projects."</i></li>
-        ${ghNew}
-      </ol>
-    </div>
+    <label>Add GitHub</label>
+    <div class="gh">${githubBlock}</div>
 
     <div class="try">
       <label>✨ Try this first</label>
@@ -3734,15 +3716,10 @@ app.get("/", (_req, res) => {
         <p>Build me a website that explains how easy it is to start coding in Claude with Railway. Include an animated chart, and a link to the Railway template so others can deploy their own. Then deploy it to Railway and send me the live URL.</p>
         <button onclick="copyText(this)">Copy</button>
       </div>
-      <div class="hint">Paste this to Claude once the connector is connected. It builds a real site and ships it live, all from one message.</div>
+      <div class="hint">Paste this to your assistant once the connector is connected. It builds a real site and ships it live, all from one message.</div>
     </div>
   </div>
   <script>
-    function showTab(id, btn) {
-      document.querySelectorAll('.pane').forEach(function (p) { p.hidden = p.id !== id; });
-      document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
-      btn.classList.add('active');
-    }
     function copyUrl(btn) {
       navigator.clipboard.writeText(btn.previousElementSibling.textContent);
       btn.textContent = 'Copied';
