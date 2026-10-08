@@ -8,6 +8,7 @@ import { z } from "zod";
 import { GraphQLClient, gql } from "graphql-request";
 import pg from "pg";
 import { registerVolumeTools } from "./tools/volumes.mjs";
+import { registerDatabaseTools } from "./tools/databases.mjs";
 import { Octokit } from "@octokit/rest";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -645,6 +646,16 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   function isNotAuthorized(err) {
     const m = String(err?.message || err || "");
     return /not authorized/i.test(m);
+  }
+
+  // Shared advice when Railway won't let this token read/deploy templates.
+  function templateAuthHint() {
+    const tokenKind = RAILWAY_API_TOKEN ? "a static RAILWAY_API_TOKEN" : "a Login-with-Railway OAuth token";
+    return (
+      `\n\nThis connector is using ${tokenKind}. ` +
+      `For Postgres, use **railway-create-postgres**, which builds the database without a template. ` +
+      `For other templates, add the service from the Railway dashboard (+ New).`
+    );
   }
 
   // Raised when a Railway call can't be authorized even after a refresh attempt.
@@ -1549,28 +1560,64 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
           );
         }
 
-        const templateData = await gqlRequest(
-          gql`
-            query ($id: String!) {
-              template(id: $id) {
-                id
-                name
-                serializedConfig
+        // Look the template up in two steps so a permissions failure says
+        // which part Railway refused: the template itself, or its
+        // serializedConfig (which OAuth app tokens appear unable to read).
+        let template;
+        try {
+          const meta = await gqlRequest(
+            gql`
+              query ($id: String!) {
+                template(id: $id) {
+                  id
+                  name
+                }
               }
-            }
-          `,
-          { id: templateId }
-        );
-
-        const template = templateData.template;
+            `,
+            { id: templateId }
+          );
+          template = meta.template;
+        } catch (lookupError) {
+          if (isNotAuthorized(lookupError)) {
+            return toolResponse(
+              `Railway refused the template lookup itself (template(id) → Not Authorized) for ${templateId}. ` +
+                `The token this connector holds can't read templates at all.` +
+                templateAuthHint()
+            );
+          }
+          throw lookupError;
+        }
         if (!template) {
           return toolResponse(`Template not found: ${templateId}`);
         }
 
+        let rawConfig;
+        try {
+          const cfg = await gqlRequest(
+            gql`
+              query ($id: String!) {
+                template(id: $id) {
+                  serializedConfig
+                }
+              }
+            `,
+            { id: templateId }
+          );
+          rawConfig = cfg.template?.serializedConfig;
+        } catch (configError) {
+          if (isNotAuthorized(configError)) {
+            return toolResponse(
+              `Found template **${template.name}**, but Railway refused to return its serializedConfig ` +
+                `(Not Authorized). The template exists and is readable; only its config is blocked for ` +
+                `this token, so deploying templates isn't possible with it.` +
+                templateAuthHint()
+            );
+          }
+          throw configError;
+        }
+
         const serializedConfig =
-          typeof template.serializedConfig === "string"
-            ? JSON.parse(template.serializedConfig)
-            : template.serializedConfig;
+          typeof rawConfig === "string" ? JSON.parse(rawConfig) : rawConfig;
 
         let envId = environmentId;
         if (projectId && !envId) {
@@ -2320,6 +2367,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
 
   // -- volume tools (railway-create-volume, railway-list-volumes, railway-delete-volume) --
   registerVolumeTools(server, { gqlRequest, resolveEnvironmentId });
+  registerDatabaseTools(server, { gqlRequest, resolveEnvironmentId });
 
   // -- GitHub connection (device flow) — these are always available so the
   //    user can connect; the action tools below appear once connected. --
