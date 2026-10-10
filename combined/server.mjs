@@ -96,6 +96,12 @@ function parseBool(v) {
 }
 const MCP_ACTIVITY_ALERTS = parseBool(process.env.MCP_ACTIVITY_ALERTS);
 
+// Railway Sandbox tools (create / exec / list / destroy) are opt-in. Exec runs
+// arbitrary shell commands in a machine that can reach the project's private
+// network, and sandboxes are billed usage, so a deployment only gets them when
+// its owner sets ENABLE_SANDBOX_TOOLS=1. RAILWAY_MODE still applies on top.
+const ENABLE_SANDBOX_TOOLS = parseBool(process.env.ENABLE_SANDBOX_TOOLS);
+
 // ---------------------------------------------------------------------------
 // Persistent OAuth storage
 // ---------------------------------------------------------------------------
@@ -2390,7 +2396,9 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   // -- volume tools (railway-create-volume, railway-list-volumes, railway-delete-volume) --
   registerVolumeTools(server, { gqlRequest, resolveEnvironmentId });
   registerDatabaseTools(server, { gqlRequest, resolveEnvironmentId });
-  registerSandboxTools(server, { gqlRequest, resolveEnvironmentId });
+  if (ENABLE_SANDBOX_TOOLS) {
+    registerSandboxTools(server, { gqlRequest, resolveEnvironmentId });
+  }
 
   // -- GitHub connection (device flow) — these are always available so the
   //    user can connect; the action tools below appear once connected. --
@@ -4188,7 +4196,7 @@ ensureRailwayClient().finally(() => {
     console.log(`Railway MCP server listening on port ${PORT}`);
     console.log(`Public URL: ${PUBLIC_URL}`);
     console.log("Auth: Login with Railway (OAuth 2.0 / OIDC + PKCE)");
-    console.log(`Capabilities: RAILWAY_MODE=${RAILWAY_MODE}, GITHUB_MODE=${GITHUB_MODE}`);
+    console.log(`Capabilities: RAILWAY_MODE=${RAILWAY_MODE}, GITHUB_MODE=${GITHUB_MODE}, SANDBOX_TOOLS=${ENABLE_SANDBOX_TOOLS ? "on" : "off"}`);
     console.log(
       `GitHub: ${
         githubAuth?.accessToken
