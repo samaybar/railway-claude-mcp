@@ -9,6 +9,7 @@ import { GraphQLClient, gql } from "graphql-request";
 import pg from "pg";
 import { registerVolumeTools } from "./tools/volumes.mjs";
 import { registerDatabaseTools } from "./tools/databases.mjs";
+import { registerSandboxTools } from "./tools/sandboxes.mjs";
 import { Octokit } from "@octokit/rest";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -94,6 +95,12 @@ function parseBool(v) {
   return ["true", "1", "yes", "on"].includes(String(v).trim().toLowerCase());
 }
 const MCP_ACTIVITY_ALERTS = parseBool(process.env.MCP_ACTIVITY_ALERTS);
+
+// Railway Sandbox tools (create / exec / list / destroy) are opt-in. Exec runs
+// arbitrary shell commands in a machine that can reach the project's private
+// network, and sandboxes are billed usage, so a deployment only gets them when
+// its owner sets ENABLE_SANDBOX_TOOLS=1. RAILWAY_MODE still applies on top.
+const ENABLE_SANDBOX_TOOLS = parseBool(process.env.ENABLE_SANDBOX_TOOLS);
 
 // ---------------------------------------------------------------------------
 // Persistent OAuth storage
@@ -302,6 +309,10 @@ const DESTRUCTIVE_TOOLS = new Set([
   "railway-query-postgres",
   "railway-create-volume",
   "railway-delete-volume",
+  "railway-create-postgres",
+  "railway-create-sandbox",
+  "railway-sandbox-exec",
+  "railway-destroy-sandbox",
   "github-merge-pull-request",
 ]);
 
@@ -313,6 +324,7 @@ const CRITICAL_TOOLS = new Set([
   "railway-delete-volume",
   "railway-set-variables",
   "railway-query-postgres",
+  "railway-sandbox-exec",
   "github-merge-pull-request",
 ]);
 
@@ -369,6 +381,15 @@ function extractArgSummary(toolName, args = {}) {
       return `project=${a.projectId || "?"} service=${a.serviceId || "?"} mount=${a.mountPath || "?"}`;
     case "railway-delete-volume":
       return `volume=${a.volumeId || "?"}`;
+    case "railway-create-postgres":
+      return `project=${a.projectId || "?"} name=${a.name || "Postgres"}`;
+    case "railway-create-sandbox":
+      return `project=${a.projectId || "?"} network=${a.privateNetwork === false ? "isolated" : "private"}${a.variables ? ` vars=${Object.keys(a.variables).join(",")}` : ""}`;
+    case "railway-sandbox-exec":
+      // Like query-postgres: show enough of the command to eyeball it.
+      return `sandbox=${a.sandboxId || "?"} cmd=${truncate((a.command || "").replace(/\s+/g, " ").trim(), 140)}`;
+    case "railway-destroy-sandbox":
+      return `sandbox=${a.sandboxId || "?"}`;
     case "github-merge-pull-request":
       return `repo=${a.owner || "?"}/${a.repo || "?"} PR#${a.pull_number ?? "?"}${a.merge_method ? ` (${a.merge_method})` : ""}`;
     default:
@@ -518,6 +539,8 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     "railway-create-service-from-github": "rwd", "railway-deploy-template": "rwd", "railway-redeploy-service": "rwd",
     "railway-update-service-source": "rwd",
     "railway-generate-domain": "rwd", "railway-create-volume": "rwd", "railway-query-postgres": "rwd",
+    "railway-create-postgres": "rwd", "railway-create-sandbox": "rwd", "railway-sandbox-exec": "rwd",
+    "railway-destroy-sandbox": "rwd",
     "railway-delete-service": "rwx", "railway-delete-volume": "rwx",
     "github-connect": "ghr", "github-status": "ghr", "github-check-connection": "ghr",
     "github-list-repos": "ghr", "github-get-repo": "ghr", "github-list-branches": "ghr", "github-get-file": "ghr",
@@ -566,10 +589,15 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     "railway-create-service-from-github": { title: "Create service from GitHub", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     "railway-update-service-source": { title: "Update service source", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     "railway-create-volume": { title: "Create volume", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-create-postgres": { title: "Create Postgres", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-create-sandbox": { title: "Create sandbox", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    "railway-list-sandboxes": { title: "List sandboxes", readOnlyHint: true, openWorldHint: true },
     // Railway — destructive
     "railway-delete-service": { title: "Delete service", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     "railway-delete-volume": { title: "Delete volume", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     "railway-query-postgres": { title: "Query Postgres", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    "railway-sandbox-exec": { title: "Run command in sandbox", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    "railway-destroy-sandbox": { title: "Destroy sandbox", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     // Connector meta + guidance (read-only / informational)
     "update-this-connector": { title: "Update this connector", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     "railway-github-access": { title: "Grant GitHub App access", readOnlyHint: true, openWorldHint: false },
@@ -2368,6 +2396,9 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   // -- volume tools (railway-create-volume, railway-list-volumes, railway-delete-volume) --
   registerVolumeTools(server, { gqlRequest, resolveEnvironmentId });
   registerDatabaseTools(server, { gqlRequest, resolveEnvironmentId });
+  if (ENABLE_SANDBOX_TOOLS) {
+    registerSandboxTools(server, { gqlRequest, resolveEnvironmentId });
+  }
 
   // -- GitHub connection (device flow) — these are always available so the
   //    user can connect; the action tools below appear once connected. --
@@ -4165,7 +4196,7 @@ ensureRailwayClient().finally(() => {
     console.log(`Railway MCP server listening on port ${PORT}`);
     console.log(`Public URL: ${PUBLIC_URL}`);
     console.log("Auth: Login with Railway (OAuth 2.0 / OIDC + PKCE)");
-    console.log(`Capabilities: RAILWAY_MODE=${RAILWAY_MODE}, GITHUB_MODE=${GITHUB_MODE}`);
+    console.log(`Capabilities: RAILWAY_MODE=${RAILWAY_MODE}, GITHUB_MODE=${GITHUB_MODE}, SANDBOX_TOOLS=${ENABLE_SANDBOX_TOOLS ? "on" : "off"}`);
     console.log(
       `GitHub: ${
         githubAuth?.accessToken
