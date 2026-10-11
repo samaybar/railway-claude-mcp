@@ -4,7 +4,7 @@ A single, self-hosted MCP server that lets you build and ship real apps on Railw
 
 One server, one connector, both toolsets:
 
-- **Railway** — workspaces, projects, services, deploys, variables, domains, logs, Postgres, volumes.
+- **Railway** — workspaces, projects, services, deploys, variables, domains, logs, Postgres, volumes, and (opt-in) sandboxes.
 - **GitHub** — repos, files, branches, pull requests (including merge), code search, commits.
 
 Together they're the full loop: GitHub writes the code, Railway ships it.

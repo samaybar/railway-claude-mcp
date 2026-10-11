@@ -6,6 +6,7 @@ One MCP server exposing **both** the Railway and GitHub toolsets behind a single
 
 - **Railway tools**: workspaces, projects, services, deploys, variables, domains, logs, Postgres, volumes. These call the Railway API **as the logged-in user** (their Login-with-Railway session), or via a static `RAILWAY_API_TOKEN` if set.
 - **GitHub tools**: repos, files, branches, pull requests (including merge), code search, commits. The tools are always listed; until GitHub is connected they return a friendly "run `github-connect` first" message.
+- **Sandbox tools** (opt-in, `ENABLE_SANDBOX_TOOLS=1`): disposable Railway Sandboxes on your project's private network. Create them fresh, from a saved **checkpoint**, or as a fork; run commands or **background jobs**; **write and read files**; publish a port at a public HTTPS address (only when asked); and **`railway-create-readonly-db-user`**, which sets up a read-only Postgres user (with its own scratch schema, optional hidden tables, password never in the chat) for safe analysis and app previews.
 - **`search` / `fetch`**: read-only tools for ChatGPT connector compatibility (search across your Railway projects + GitHub repos).
 
 GitHub is optional — turn it on with the **`github-connect`** tool (GitHub App device flow, no token to paste) or a static `GITHUB_TOKEN`. Set `GITHUB_MODE=off` to hide GitHub entirely.
@@ -22,6 +23,7 @@ GitHub is optional — turn it on with the **`github-connect`** tool (GitHub App
 | `GITHUB_MODE` | No | GitHub capability: `off`, `read`, or `write` (default). `off` hides GitHub entirely. |
 | `GITHUB_TOKEN` | No | Optional **static** GitHub token (fallback). The preferred way to turn on GitHub is the **`github-connect`** tool (GitHub App device flow). Token form: fine-grained with Contents + Pull requests + Administration = R/W, Metadata = Read; or classic `repo`. |
 | `RAILWAY_API_TOKEN` | No | **Leave blank for normal use.** Default is to act as the logged-in user, with the session refreshed automatically. Set this only for unattended or shared deployments (no human to reconnect, or one fixed service identity). Use an account token, not a project token. |
+| `ENABLE_SANDBOX_TOOLS` | No | `1` to turn on the sandbox tools (off by default). |
 | `ALLOWED_RAILWAY_EMAILS` | No | Comma-separated allowed emails; else trust-on-first-use. |
 | `RAILWAY_OAUTH_CLIENT_ID` / `_SECRET` | No | Pre-registered OAuth app; else DCR self-registration. |
 | `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_APP_SLUG` | No | The GitHub App that `github-connect` uses (defaults baked in). |
