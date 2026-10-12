@@ -315,6 +315,7 @@ const DESTRUCTIVE_TOOLS = new Set([
   "railway-destroy-sandbox",
   "railway-sandbox-job",
   "railway-sandbox-write-file",
+  "railway-sandbox-load-repo",
   "railway-sandbox-checkpoint",
   "railway-create-readonly-db-user",
   "github-merge-pull-request",
@@ -389,7 +390,7 @@ function extractArgSummary(toolName, args = {}) {
     case "railway-create-postgres":
       return `project=${a.projectId || "?"} name=${a.name || "Postgres"}`;
     case "railway-create-sandbox":
-      return `project=${a.projectId || "?"} network=${a.privateNetwork === false ? "isolated" : "private"}${a.variables ? ` vars=${Object.keys(a.variables).join(",")}` : ""}${a.checkpoint ? ` checkpoint=${a.checkpoint}` : ""}${a.forkFrom ? ` fork=${a.forkFrom}` : ""}${a.publicPorts?.length ? ` PUBLIC ports=${a.publicPorts.join(",")}` : ""}`;
+      return `project=${a.projectId || "?"} network=${a.privateNetwork === false ? "isolated" : "private"}${a.variables ? ` vars=${Object.keys(a.variables).join(",")}` : ""}${a.repo ? ` repo=${a.repo}@${a.ref || "default"}` : ""}${a.checkpoint ? ` checkpoint=${a.checkpoint}` : ""}${a.forkFrom ? ` fork=${a.forkFrom}` : ""}${a.publicPorts?.length ? ` PUBLIC ports=${a.publicPorts.join(",")}` : ""}`;
     case "railway-sandbox-exec":
       // Like query-postgres: show enough of the command to eyeball it.
       return `sandbox=${a.sandboxId || "?"}${a.background ? ` background job=${a.name || "?"}` : ""} cmd=${truncate((a.command || "").replace(/\s+/g, " ").trim(), 140)}`;
@@ -400,6 +401,8 @@ function extractArgSummary(toolName, args = {}) {
       return `sandbox=${a.sandboxId || "?"} path=${a.path || "?"} chars=${(a.content || "").length}`;
     case "railway-sandbox-checkpoint":
       return `project=${a.projectId || "?"} ${a.action || "?"}${a.name ? ` name=${a.name}` : ""}${a.sandboxId ? ` sandbox=${a.sandboxId}` : ""}`;
+    case "railway-sandbox-load-repo":
+      return `sandbox=${a.sandboxId || "?"} repo=${a.repo || "?"}@${a.ref || "default"} -> ${a.path || "/root/app"}`;
     case "railway-create-readonly-db-user":
       return `project=${a.projectId || "?"} postgres=${a.postgresServiceId || "?"} user=${a.roleName || "analyst"}${a.excludeTables?.length ? ` hide=${a.excludeTables.join(",")}` : ""}`;
     case "railway-destroy-sandbox":
@@ -554,7 +557,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     "railway-update-service-source": "rwd",
     "railway-generate-domain": "rwd", "railway-create-volume": "rwd", "railway-query-postgres": "rwd",
     "railway-create-postgres": "rwd", "railway-create-sandbox": "rwd", "railway-sandbox-exec": "rwd",
-    "railway-destroy-sandbox": "rwd", "railway-sandbox-job": "rwd", "railway-sandbox-write-file": "rwd",
+    "railway-destroy-sandbox": "rwd", "railway-sandbox-job": "rwd", "railway-sandbox-write-file": "rwd", "railway-sandbox-load-repo": "rwd",
     "railway-sandbox-checkpoint": "rwd", "railway-create-readonly-db-user": "rwd",
     "railway-delete-service": "rwx", "railway-delete-volume": "rwx",
     "github-connect": "ghr", "github-status": "ghr", "github-check-connection": "ghr",
@@ -616,6 +619,7 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
     "railway-sandbox-job": { title: "Check or stop sandbox job", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     "railway-sandbox-write-file": { title: "Write file to sandbox", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     "railway-sandbox-read-file": { title: "Read file from sandbox", readOnlyHint: true, openWorldHint: true },
+    "railway-sandbox-load-repo": { title: "Load GitHub repo into sandbox", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     "railway-sandbox-checkpoint": { title: "Sandbox checkpoints", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     "railway-create-readonly-db-user": { title: "Create read-only database user", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     // Connector meta + guidance (read-only / informational)
@@ -2417,7 +2421,8 @@ function createRailwayMcpServer(railwayToken, githubToken, mcpToken) {
   registerVolumeTools(server, { gqlRequest, resolveEnvironmentId });
   registerDatabaseTools(server, { gqlRequest, resolveEnvironmentId });
   if (ENABLE_SANDBOX_TOOLS) {
-    registerSandboxTools(server, { gqlRequest, resolveEnvironmentId });
+    // octokit is defined below; the getter is only called when a tool runs.
+    registerSandboxTools(server, { gqlRequest, resolveEnvironmentId, getOctokit: () => octokit });
   }
 
   // -- GitHub connection (device flow) — these are always available so the
