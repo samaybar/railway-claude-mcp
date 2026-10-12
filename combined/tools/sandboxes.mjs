@@ -7,6 +7,8 @@
 //   - railway-sandbox-job          Check on / stop a background command started by railway-sandbox-exec
 //   - railway-sandbox-write-file   Write a file into a sandbox (any size; chunked server-side)
 //   - railway-sandbox-read-file    Read a file (or a byte range of one) from a sandbox
+//   - railway-sandbox-load-repo    Copy a GitHub repo (any branch) into a sandbox, server-side
+//                                  (also available as the repo option on railway-create-sandbox)
 //   - railway-sandbox-checkpoint   Save, list or delete named disk snapshots to start sandboxes from
 //   - railway-list-sandboxes       List sandboxes in an environment
 //   - railway-destroy-sandbox      Destroy a sandbox
@@ -57,6 +59,8 @@ const WRITE_CHUNK_CHARS = 12000;
 const READ_MAX_BYTES = 11000;
 const JOB_DIR = "/tmp/.mcp-jobs";
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+const REPO_RE = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+const REPO_MAX_BYTES = 8 * 1024 * 1024;
 
 function describe(s) {
   const gone = TERMINAL.has(s.status);
@@ -75,7 +79,7 @@ function describe(s) {
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`; // single-quote for the shell
 
 export function registerSandboxTools(server, deps) {
-  const { gqlRequest, resolveEnvironmentId } = deps;
+  const { gqlRequest, resolveEnvironmentId, getOctokit } = deps;
 
   async function getSandbox(environmentId, id) {
     const data = await gqlRequest(
@@ -170,6 +174,34 @@ export function registerSandboxTools(server, deps) {
     return Math.max(1, Math.ceil(b64.length / WRITE_CHUNK_CHARS));
   }
 
+  // Download a repo tarball with the connector's GitHub access and unpack it in the sandbox,
+  // so code never has to pass through the chat.
+  async function loadRepo(environmentId, id, repo, ref, dest) {
+    if (!getOctokit) throw new Error("GitHub access isn't available in this connector");
+    const [owner, name] = repo.split("/");
+    const octokit = getOctokit();
+    let sha = null;
+    try {
+      const { data } = await octokit.repos.getCommit({ owner, repo: name, ref: ref || "HEAD" });
+      sha = data.sha;
+    } catch (e) {
+      throw new Error(`can't find ${repo}${ref ? `@${ref}` : ""}: ${e.message}`);
+    }
+    const { data } = await octokit.repos.downloadTarballArchive({ owner, repo: name, ref: sha });
+    const buf = Buffer.from(data);
+    if (buf.length > REPO_MAX_BYTES) throw new Error(`repo archive is ${buf.length} bytes; the limit is ${REPO_MAX_BYTES}`);
+    const tmp = `/tmp/.mcp-repo-${randomBytes(4).toString("hex")}.tgz`;
+    await writeFile(environmentId, id, tmp, buf);
+    const r = await run(
+      environmentId,
+      id,
+      `mkdir -p ${sq(dest)} && tar xzf ${tmp} --strip-components=1 -C ${sq(dest)} && rm -f ${tmp} && ` +
+        `echo ${sq(sha)} > ${sq(dest)}/.loaded-commit && find ${sq(dest)} -type f -not -path '*/.git/*' | wc -l`,
+      120
+    );
+    return { sha, files: Number((r.stdout || "0").trim()), bytes: buf.length };
+  }
+
   const envFields = {
     projectId: z.string().describe("The project ID"),
     environmentId: z
@@ -216,8 +248,11 @@ export function registerSandboxTools(server, deps) {
         .optional()
         .describe("Ports to publish at public HTTPS addresses (requires the private network). Off unless given."),
       region: z.string().optional().describe("Region, e.g. us-east4-eqdc4a (default us-west2; forks use their source's region)"),
+      repo: z.string().regex(REPO_RE).optional().describe("GitHub repo (owner/name) to copy into the sandbox once it's running, using the connector's GitHub access"),
+      ref: z.string().optional().describe("Branch, tag or commit for repo (default: the repo's default branch)"),
+      repoPath: z.string().optional().describe("Where to put the repo (default /root/app); existing files there are overwritten"),
     },
-    async ({ projectId, environmentId, privateNetwork, idleTimeoutMinutes, variables, checkpoint, forkFrom, publicPorts, region }) => {
+    async ({ projectId, environmentId, privateNetwork, idleTimeoutMinutes, variables, checkpoint, forkFrom, publicPorts, region, repo, ref, repoPath }) => {
       try {
         if (checkpoint && forkFrom) return toolResponse("Use either checkpoint or forkFrom, not both.");
         if (publicPorts?.length && privateNetwork === false)
@@ -243,9 +278,20 @@ export function registerSandboxTools(server, deps) {
           );
         }
         const from = checkpoint ? ` from checkpoint "${checkpoint}"` : forkFrom ? ` as a fork of ${forkFrom}` : "";
+        let loaded = "";
+        if (repo) {
+          const dest = repoPath || "/root/app";
+          try {
+            const r = await loadRepo(envId, sb.id, repo, ref, dest);
+            loaded = `  code: ${repo}@${ref || "default branch"} (commit ${r.sha.slice(0, 7)}, ${r.files} files) in ${dest}\n`;
+          } catch (e) {
+            loaded = `  code: FAILED to load ${repo}: ${e.message}\n`;
+          }
+        }
         return toolResponse(
           `Sandbox running${from}.\n\n${describe(sb)}\n` +
             (vars.length ? `  variables: ${vars.join(", ")}\n` : "") +
+            loaded +
             `\nRun commands with railway-sandbox-exec (sandboxId: ${sb.id}, environmentId: ${envId}).`
         );
       } catch (error) {
@@ -451,6 +497,32 @@ export function registerSandboxTools(server, deps) {
         return toolResponse(`${header}\n\n\`\`\`\n${bytes.toString("utf8")}\n\`\`\``);
       } catch (error) {
         return toolResponse(`Failed to read file: ${error.message}`);
+      }
+    }
+  );
+
+  // -- railway-sandbox-load-repo --
+  server.tool(
+    "railway-sandbox-load-repo",
+    "Copy a GitHub repository (any branch, tag or commit) into a running Railway Sandbox, using the connector's GitHub access server-side so no code passes through the chat and no token goes into the sandbox. Overwrites files at the destination; the loaded commit is written to .loaded-commit there. Use it to run or test a branch.",
+    {
+      ...envFields,
+      sandboxId: z.string().describe("The sandbox ID"),
+      repo: z.string().regex(REPO_RE).describe("GitHub repo as owner/name"),
+      ref: z.string().optional().describe("Branch, tag or commit (default: the repo's default branch)"),
+      path: z.string().optional().describe("Destination directory (default /root/app)"),
+    },
+    async ({ projectId, environmentId, sandboxId, repo, ref, path }) => {
+      try {
+        const dest = path || "/root/app";
+        if (!dest.startsWith("/")) return toolResponse("path must be absolute (start with /).");
+        const envId = await resolveEnvironmentId(projectId, environmentId);
+        const r = await loadRepo(envId, sandboxId, repo, ref, dest);
+        return toolResponse(
+          `Loaded ${repo}@${ref || "default branch"} (commit ${r.sha.slice(0, 7)}, ${r.files} files, ${r.bytes} bytes compressed) into ${dest}.`
+        );
+      } catch (error) {
+        return toolResponse(`Failed to load repo: ${error.message}`);
       }
     }
   );
